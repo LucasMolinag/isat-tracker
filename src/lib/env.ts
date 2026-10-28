@@ -19,7 +19,12 @@ export function envChecklist(): EnvRequirement[] {
     {
       key: "DATABASE_URL",
       present: present("DATABASE_URL"),
-      hint: "Neon/Supabase/Postgres connection string (sslmode=require)",
+      hint: "Neon pooled URL (-pooler) for app queries; from `neon deploy` / env pull",
+    },
+    {
+      key: "DATABASE_URL_UNPOOLED",
+      present: present("DATABASE_URL_UNPOOLED"),
+      hint: "Neon direct URL for Prisma Migrate (`directUrl`)",
     },
     {
       key: "AUTH_SECRET",

@@ -1,5 +1,10 @@
 import { PrismaClient } from "@prisma/client";
 
+/**
+ * Prisma client singleton (Node runtime).
+ * Uses DATABASE_URL (Neon pooled) for queries; migrations use
+ * DATABASE_URL_UNPOOLED via schema `directUrl`.
+ */
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };

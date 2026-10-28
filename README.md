@@ -6,10 +6,11 @@ Multi-user web app: connect Google, pull inbox mail matching configurable subjec
 
 - Next.js (App Router) + TypeScript + Tailwind
 - Auth.js (NextAuth v5) Google provider
-- Postgres via Prisma
+- Neon Postgres via Prisma (`DATABASE_URL` pooled + `DATABASE_URL_UNPOOLED` for migrations)
 - OAuth tokens encrypted at rest (`TOKEN_ENCRYPTION_KEY`)
 - Live Gmail + Sheets/Forms APIs on **Sync now** / `POST /api/sync`
 - Vercel Cron → `GET /api/cron/sync` (secured with `CRON_SECRET`) every 15 minutes
+- `neon.ts` + Neon CLI (`neon init` / `neon deploy` / `neon env pull`)
 
 ## Status flow
 
@@ -22,17 +23,19 @@ Dashboard “Open form” goes through `/r/{trackingId}`, then redirects to the 
 ## Quick start (local)
 
 ```bash
-cp .env.example .env
-# fill DATABASE_URL, AUTH_SECRET, AUTH_GOOGLE_*, TOKEN_ENCRYPTION_KEY
-# CRON_SECRET optional locally
-
 npm install
-npx prisma migrate dev
-npm run build:ci   # or: npm run dev
+# Link Neon (once) and pull DATABASE_URL* into .env.local:
+#   neon init -y --org-id … --project-id … --branch production --services postgres
+#   neon deploy
+# Or: cp .env.example .env.local and paste pooled + unpooled URLs
+
+# Add AUTH_SECRET, AUTH_GOOGLE_*, TOKEN_ENCRYPTION_KEY to .env.local
+npx prisma migrate deploy   # uses DATABASE_URL_UNPOOLED via Prisma directUrl
+npm run build               # migrate deploy + next build
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). Confirm `GET /api/health` → `database.ok: true`.
 
 ## Environment variables
 
@@ -42,23 +45,27 @@ Open [http://localhost:3000](http://localhost:3000).
 | `AUTH_SECRET` | Yes | Auth.js session secret (`openssl rand -base64 32`) |
 | `AUTH_GOOGLE_CLIENT_ID` | Yes | Google OAuth web client id |
 | `AUTH_GOOGLE_CLIENT_SECRET` | Yes | Google OAuth web client secret |
-| `DATABASE_URL` | Yes | Postgres (Neon/Supabase/etc.), prefer pooled + `sslmode=require` |
+| `DATABASE_URL` | Yes | Neon **pooled** URL (`-pooler`) for app queries |
+| `DATABASE_URL_UNPOOLED` | Yes | Neon **direct** URL for Prisma Migrate |
+| `NEON_BRANCH` | No | Set by `neon env pull` (informational) |
 | `TOKEN_ENCRYPTION_KEY` | Yes | 32-byte AES key (`openssl rand -hex 32`) |
 | `CRON_SECRET` | Yes (prod cron) | Bearer secret for `/api/cron/sync` (`openssl rand -base64 32`) |
 
 Aliases: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `NEXTAUTH_SECRET` / `NEXTAUTH_URL`.
 
-**Do not commit secrets.** `.env*` is gitignored (`.env.example` is tracked).
+**Do not commit secrets.** `.env` / `.env.local` are gitignored (`.env.example` is tracked). Never commit `NEON_API_KEY`.
 
-`GET /api/health` reports which keys are present (never values).
+`GET /api/health` reports env key presence (never values) and pings Postgres (`database.ok`).
 
 ## Go live (production checklist)
 
-### 1. Postgres
+### 1. Neon Postgres
 
-1. Create a Neon or Supabase project (or any Postgres 14+).
-2. Copy the connection string into `DATABASE_URL` (use the **pooled** URL on Vercel).
-3. Ensure `?sslmode=require` (or provider equivalent).
+1. Project is linked via `neon.ts` / CLI (`neon init` … `--project-id wispy-moon-02969203` for ISAT Tracker).
+2. `neon deploy` then `neon env pull` (or Vercel Neon integration) so both URLs exist:
+   - `DATABASE_URL` — pooled (app / serverless)
+   - `DATABASE_URL_UNPOOLED` — direct (migrations)
+3. On Vercel, set **both** URL env vars (and run migrations at build via `prisma migrate deploy`).
 
 ### 2. Google Cloud OAuth
 
