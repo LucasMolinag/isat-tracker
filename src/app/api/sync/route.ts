@@ -6,7 +6,7 @@ import { matchFormResponsesForUser } from "@/lib/forms";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/sync — run Gmail upsert stub + Forms matcher stub for the signed-in user.
+ * POST /api/sync — Gmail subject upsert + Forms/Sheets → Submitted for the signed-in user.
  */
 export async function POST() {
   const session = await auth();
@@ -14,8 +14,13 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const gmail = await syncGmailForUser(session.user.id);
-  const forms = await matchFormResponsesForUser(session.user.id);
+  const userId = session.user.id;
+  const gmail = await syncGmailForUser(userId);
+  const forms = await matchFormResponsesForUser(userId);
 
-  return NextResponse.json({ gmail, forms });
+  const ok = gmail.ok && forms.ok;
+  return NextResponse.json(
+    { ok, gmail, forms },
+    { status: ok ? 200 : 207 },
+  );
 }

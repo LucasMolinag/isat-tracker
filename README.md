@@ -8,12 +8,13 @@ Multi-user web app: connect Google, pull inbox mail matching configurable subjec
 - Auth.js (NextAuth v5) Google provider
 - Postgres via Prisma
 - OAuth tokens encrypted at rest (`TOKEN_ENCRYPTION_KEY`)
+- Live Gmail + Sheets/Forms APIs on **Sync now** / `POST /api/sync`
 
 ## Status flow
 
-1. **Unread** — synced from Gmail (stub until Gmail API is wired).
+1. **Unread** — created when Gmail sync upserts a matching message.
 2. **Read** — user opens `/r/{trackingId}` from the dashboard (idempotent; never downgrades Submitted).
-3. **Submitted** — Forms/Sheets matcher finds the tracking token in responses (stub until Sheets/Forms API is wired).
+3. **Submitted** — sync matcher finds the tracking token in a linked Sheet or Forms responses.
 
 Dashboard “Open form” goes through `/r/{trackingId}`, then redirects to the Google Form with `entry.<fieldId>=<trackingId>` prefilled.
 
@@ -24,7 +25,7 @@ cp .env.example .env
 # fill in DATABASE_URL, AUTH_SECRET, AUTH_GOOGLE_*, TOKEN_ENCRYPTION_KEY
 
 npm install
-npx prisma migrate dev --name init
+npx prisma migrate dev
 npm run dev
 ```
 
@@ -43,15 +44,15 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Aliases: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` and `NEXTAUTH_SECRET` / `NEXTAUTH_URL` are also read where noted in code.
 
-**Do not commit secrets.** `.env*` is gitignored.
+**Do not commit secrets.** `.env*` is gitignored (`.env.example` is tracked).
 
 ## Google Cloud setup (one-time)
 
 1. Create a GCP project (or reuse one).
 2. Enable APIs:
    - **Gmail API**
-   - **Google Sheets API**
-   - **Google Forms API** (if using Forms responses instead of a linked Sheet)
+   - **Google Sheets API** (recommended for Submitted matching)
+   - **Google Forms API** (optional if you match via Forms responses instead of a Sheet)
 3. Configure the **OAuth consent screen** (External or Internal). Add scopes used by the app:
    - `openid`, `email`, `profile`
    - `https://www.googleapis.com/auth/gmail.readonly`
@@ -64,25 +65,40 @@ Aliases: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` and `NEXTAUTH_SECRET` / `NE
 6. Copy client id/secret into `.env` as `AUTH_GOOGLE_CLIENT_ID` / `AUTH_GOOGLE_CLIENT_SECRET`.
 7. Put `DATABASE_URL` and `TOKEN_ENCRYPTION_KEY` in env (Vercel / hosting + local `.env`).
 
+After changing scopes, users must sign out and sign in again (`prompt=consent` is already set) so a new refresh token includes Gmail/Sheets/Forms.
+
 ### Per-form setup
 
 1. Add a short-answer (or hidden) question reserved for the tracking ID.
-2. Prefill link / “Get pre-filled link” → copy the `entry.XXXXXXXX` field id into Settings.
-3. Optionally link the form to a Sheet and store the spreadsheet id for the response matcher.
+2. Prefill link / “Get pre-filled link” → copy the `entry.XXXXXXXX` field id into **Settings**.
+3. **Submitted matching (pick one):**
+   - **Preferred:** Link the form to a Google Sheet → paste the spreadsheet id (or full URL) into **Response Sheet id**. Sync reads sheet cells for tracking UUIDs.
+   - **Alternative:** Leave Sheet empty and use a Forms **edit** URL (`https://docs.google.com/forms/d/{FORM_ID}/edit`). The public `/forms/d/e/...` viewform id is **not** a Forms API `formId`; sync will error with guidance if only `/d/e/` is configured.
 
-## What’s implemented vs stubbed
+## Sync behavior
+
+`POST /api/sync` (Settings / Dashboard **Sync now**):
+
+1. Builds Gmail `q` from enabled subject rules (`Exact` → `subject:"…"`, `Contains` → `subject:…`, OR’d).
+2. Lists messages, creates missing `EmailEntry` rows as **Unread** (links default `FormConfig` when present). Existing rows keep their status.
+3. Scans Sheet cells or Forms response answers for open entries’ `trackingId` → **Submitted** (never downgrades).
+4. Updates `User.lastSyncAt` / `lastSyncError` from the Gmail step.
+
+Clear errors when client secrets, tokens, or scopes are missing (HTTP 207 if either step fails).
+
+`/r/{trackingId}` is unchanged: mark **Read** → redirect with form prefill.
+
+## What’s implemented vs remaining
 
 | Area | Status |
 | --- | --- |
-| Prisma models (User, Account/Session, SubjectRule, FormConfig, EmailEntry, StatusEvent) | Done |
-| Encrypted token helpers + adapter wrap on `linkAccount` | Done |
-| Auth.js Google sign-in (scopes listed above) | Done (needs real OAuth client) |
-| Settings: subject rules + form config + Sync now | Done (persists to DB) |
-| Dashboard list + status chips + Open form | Done (empty until sync creates rows) |
-| `/r/{trackingId}` → mark Read → redirect with prefill | Done |
-| Gmail subject sync | **Stub** — builds query / updates `lastSync*`; no live API |
-| Forms/Sheets response → Submitted | **Stub** — no live API; `markSubmittedByTrackingId` helper ready |
-| Deploy / cron jobs | Out of this scaffold |
+| Prisma models + encrypted tokens | Done |
+| Auth.js Google sign-in (scopes above) | Done (needs real OAuth client) |
+| Settings + dashboard + `/r/{trackingId}` | Done |
+| Live Gmail subject sync | Done |
+| Live Forms/Sheets → Submitted | Done |
+| Background cron / Gmail Pub/Sub | **Not yet** — sync is on-demand via `/api/sync` |
+| Multi-form routing / digests | Out of MVP |
 
 ## Scripts
 
@@ -99,4 +115,4 @@ npx prisma studio
 
 - All domain queries are scoped by `userId`.
 - Tracking links are UUIDs; status writes are idempotent and never downgrade Submitted.
-- Encrypt tokens with `encryptAccountTokens` / decrypt with `decryptAccountTokens` before Google API calls.
+- Access/refresh tokens are encrypted at rest; refresh writes re-encrypt the new access token.
