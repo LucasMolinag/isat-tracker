@@ -9,7 +9,7 @@ Multi-user web app: connect Google, pull inbox mail matching configurable subjec
 - Neon Postgres via Prisma (`DATABASE_URL` pooled + `DATABASE_URL_UNPOOLED` for migrations)
 - OAuth tokens encrypted at rest (`TOKEN_ENCRYPTION_KEY`)
 - Live Gmail + Sheets/Forms APIs on **Sync now** / `POST /api/sync`
-- Vercel Cron → `GET /api/cron/sync` (secured with `CRON_SECRET`) every 15 minutes
+- Vercel Cron → `GET /api/cron/sync` (secured with `CRON_SECRET`; daily on Hobby, `*/15` needs Pro)
 - `neon.ts` + Neon CLI (`neon init` / `neon deploy` / `neon env pull`)
 
 ## Status flow
@@ -106,16 +106,16 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" \
 
 ### 5. Cron
 
-`vercel.json` schedules **every 15 minutes**:
+`vercel.json` schedules cron (Hobby-compatible **daily** UTC 14:00):
 
 ```json
-{ "path": "/api/cron/sync", "schedule": "*/15 * * * *" }
+{ "path": "/api/cron/sync", "schedule": "0 14 * * *" }
 ```
 
 - Vercel injects `Authorization: Bearer $CRON_SECRET` when `CRON_SECRET` is set in project env.
 - Also accepts `x-cron-secret` or `?secret=` (prefer header).
 - Cron syncs **all** users with a linked Google account (Gmail upsert + Forms/Sheets → Submitted).
-- Hobby plan: Vercel Cron is limited (daily on some tiers); Pro supports `*/15`. Adjust schedule if the platform rejects the expression.
+- Hobby plan allows at most one run per day; upgrade to Pro for `*/15 * * * *`.
 
 ## Sync behavior
 
