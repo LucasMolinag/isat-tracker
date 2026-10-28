@@ -1,0 +1,149 @@
+// ISAT email → form tracker data model
+// See docs in README for Google OAuth + encryption setup.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EntryStatus {
+  Unread
+  Read
+  Submitted
+}
+
+enum MatchMode {
+  Exact
+  Contains
+}
+
+/// Auth.js / app user. Google subject lives on linked Account.providerAccountId.
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  /// Last successful Gmail/Forms sync (admin-lite surface).
+  lastSyncAt    DateTime?
+  lastSyncError String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts     Account[]
+  sessions     Session[]
+  subjectRules SubjectRule[]
+  formConfigs  FormConfig[]
+  emailEntries EmailEntry[]
+}
+
+/// OAuth account. access_token / refresh_token should be stored encrypted
+/// via src/lib/crypto.ts helpers before write (see auth callbacks).
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model SubjectRule {
+  id        String    @id @default(cuid())
+  userId    String
+  /// Subject pattern to match against Gmail (exact or contains).
+  pattern   String
+  matchMode MatchMode @default(Contains)
+  enabled   Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model FormConfig {
+  id String @id @default(cuid())
+  userId String
+  /// Public Google Form URL (or edit URL converted at runtime).
+  formUrl String
+  /// Google Forms `entry.<id>` field reserved for the tracking token.
+  entryFieldId String
+  /// Optional linked response Sheet spreadsheet id.
+  responseSheetId String?
+  label String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailEntries EmailEntry[]
+
+  @@index([userId])
+}
+
+model EmailEntry {
+  id             String      @id @default(cuid())
+  userId         String
+  gmailMessageId String
+  subject        String
+  fromAddress    String
+  receivedAt     DateTime
+  /// Unguessable UUID used in /r/{trackingId} and form prefill.
+  trackingId     String      @unique @default(uuid())
+  status         EntryStatus @default(Unread)
+  formConfigId   String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  formConfig   FormConfig?   @relation(fields: [formConfigId], references: [id], onDelete: SetNull)
+  statusEvents StatusEvent[]
+
+  @@unique([userId, gmailMessageId])
+  @@index([userId, status])
+  @@index([trackingId])
+}
+
+model StatusEvent {
+  id        String       @id @default(cuid())
+  entryId   String
+  fromStatus EntryStatus?
+  toStatus  EntryStatus
+  at        DateTime     @default(now())
+  note      String?
+
+  entry EmailEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+}
