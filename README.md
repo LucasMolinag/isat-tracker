@@ -8,23 +8,27 @@ Multi-user web app: connect Google, pull inbox mail matching configurable subjec
 - Auth.js (NextAuth v5) Google provider
 - Postgres via Prisma
 - OAuth tokens encrypted at rest (`TOKEN_ENCRYPTION_KEY`)
+- Live Gmail + Sheets/Forms APIs on **Sync now** / `POST /api/sync`
+- Vercel Cron → `GET /api/cron/sync` (secured with `CRON_SECRET`) every 15 minutes
 
 ## Status flow
 
-1. **Unread** — synced from Gmail (stub until Gmail API is wired).
+1. **Unread** — created when Gmail sync upserts a matching message.
 2. **Read** — user opens `/r/{trackingId}` from the dashboard (idempotent; never downgrades Submitted).
-3. **Submitted** — Forms/Sheets matcher finds the tracking token in responses (stub until Sheets/Forms API is wired).
+3. **Submitted** — sync matcher finds the tracking token in a linked Sheet or Forms responses.
 
 Dashboard “Open form” goes through `/r/{trackingId}`, then redirects to the Google Form with `entry.<fieldId>=<trackingId>` prefilled.
 
-## Quick start
+## Quick start (local)
 
 ```bash
 cp .env.example .env
-# fill in DATABASE_URL, AUTH_SECRET, AUTH_GOOGLE_*, TOKEN_ENCRYPTION_KEY
+# fill DATABASE_URL, AUTH_SECRET, AUTH_GOOGLE_*, TOKEN_ENCRYPTION_KEY
+# CRON_SECRET optional locally
 
 npm install
-npx prisma migrate dev --name init
+npx prisma migrate dev
+npm run build:ci   # or: npm run dev
 npm run dev
 ```
 
@@ -32,71 +36,118 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Environment variables
 
-| Variable | Purpose |
-| --- | --- |
-| `AUTH_URL` | Public app URL (e.g. `http://localhost:3000`) |
-| `AUTH_SECRET` | Auth.js session secret (`openssl rand -base64 32`) |
-| `AUTH_GOOGLE_CLIENT_ID` | Google OAuth web client id |
-| `AUTH_GOOGLE_CLIENT_SECRET` | Google OAuth web client secret |
-| `DATABASE_URL` | Postgres connection string for Prisma |
-| `TOKEN_ENCRYPTION_KEY` | 32-byte AES key as hex (`openssl rand -hex 32`) or base64 |
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `AUTH_URL` | Yes (prod) | Public app URL (`https://…vercel.app`) |
+| `AUTH_SECRET` | Yes | Auth.js session secret (`openssl rand -base64 32`) |
+| `AUTH_GOOGLE_CLIENT_ID` | Yes | Google OAuth web client id |
+| `AUTH_GOOGLE_CLIENT_SECRET` | Yes | Google OAuth web client secret |
+| `DATABASE_URL` | Yes | Postgres (Neon/Supabase/etc.), prefer pooled + `sslmode=require` |
+| `TOKEN_ENCRYPTION_KEY` | Yes | 32-byte AES key (`openssl rand -hex 32`) |
+| `CRON_SECRET` | Yes (prod cron) | Bearer secret for `/api/cron/sync` (`openssl rand -base64 32`) |
 
-Aliases: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` and `NEXTAUTH_SECRET` / `NEXTAUTH_URL` are also read where noted in code.
+Aliases: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `NEXTAUTH_SECRET` / `NEXTAUTH_URL`.
 
-**Do not commit secrets.** `.env*` is gitignored.
+**Do not commit secrets.** `.env*` is gitignored (`.env.example` is tracked).
 
-## Google Cloud setup (one-time)
+`GET /api/health` reports which keys are present (never values).
 
-1. Create a GCP project (or reuse one).
-2. Enable APIs:
-   - **Gmail API**
-   - **Google Sheets API**
-   - **Google Forms API** (if using Forms responses instead of a linked Sheet)
-3. Configure the **OAuth consent screen** (External or Internal). Add scopes used by the app:
-   - `openid`, `email`, `profile`
-   - `https://www.googleapis.com/auth/gmail.readonly`
-   - `https://www.googleapis.com/auth/spreadsheets.readonly`
-   - `https://www.googleapis.com/auth/forms.responses.readonly`
-4. Create an **OAuth client ID** → Application type **Web application**.
-5. Authorized redirect URI for Auth.js:
-   - Local: `http://localhost:3000/api/auth/callback/google`
-   - Prod: `https://YOUR_DOMAIN/api/auth/callback/google`
-6. Copy client id/secret into `.env` as `AUTH_GOOGLE_CLIENT_ID` / `AUTH_GOOGLE_CLIENT_SECRET`.
-7. Put `DATABASE_URL` and `TOKEN_ENCRYPTION_KEY` in env (Vercel / hosting + local `.env`).
+## Go live (production checklist)
 
-### Per-form setup
+### 1. Postgres
+
+1. Create a Neon or Supabase project (or any Postgres 14+).
+2. Copy the connection string into `DATABASE_URL` (use the **pooled** URL on Vercel).
+3. Ensure `?sslmode=require` (or provider equivalent).
+
+### 2. Google Cloud OAuth
+
+1. GCP project → enable **Gmail API**, **Google Sheets API**, and optionally **Google Forms API**.
+2. OAuth consent screen (Internal for Workspace, or External):
+   - Scopes:
+     - `openid`, `email`, `profile`
+     - `https://www.googleapis.com/auth/gmail.readonly`
+     - `https://www.googleapis.com/auth/spreadsheets.readonly`
+     - `https://www.googleapis.com/auth/forms.responses.readonly`
+3. Create **OAuth client → Web application**.
+4. Authorized redirect URIs:
+   - `http://localhost:3000/api/auth/callback/google`
+   - `https://YOUR_PROJECT.vercel.app/api/auth/callback/google`
+5. Authorized JavaScript origins (optional): your `AUTH_URL` origins.
+6. Put client id/secret in Vercel env as `AUTH_GOOGLE_CLIENT_ID` / `AUTH_GOOGLE_CLIENT_SECRET`.
+
+After changing scopes, each user must sign out and sign in again (`prompt=consent` is set) so refresh tokens include Gmail/Sheets/Forms.
+
+### 3. Form tracking field
 
 1. Add a short-answer (or hidden) question reserved for the tracking ID.
-2. Prefill link / “Get pre-filled link” → copy the `entry.XXXXXXXX` field id into Settings.
-3. Optionally link the form to a Sheet and store the spreadsheet id for the response matcher.
+2. “Get pre-filled link” → copy `entry.XXXXXXXX` into **Settings → Tracking entry field id**.
+3. Link responses to a Sheet → paste spreadsheet id/URL into **Response Sheet id** (preferred), **or** use a Forms **edit** URL (`/forms/d/{id}/edit`) for Forms API matching. Public `/d/e/` viewform ids are not Forms API formIds.
 
-## What’s implemented vs stubbed
+### 4. Vercel deploy
+
+1. Import the GitHub repo in Vercel (Framework: Next.js).
+2. Set env vars from the table above (`AUTH_URL` = your Vercel URL).
+3. Deploy. `npm run build` runs `prisma migrate deploy` then `next build` — `DATABASE_URL` must be available at build time.
+4. Confirm `GET https://YOUR_HOST/api/health` → `ready: true`, `cronReady: true`.
+5. Sign in once, configure subject rules + form, click **Sync now**, then wait for cron or curl:
+
+```bash
+curl -sS -H "Authorization: Bearer $CRON_SECRET" \
+  https://YOUR_HOST/api/cron/sync
+```
+
+### 5. Cron
+
+`vercel.json` schedules **every 15 minutes**:
+
+```json
+{ "path": "/api/cron/sync", "schedule": "*/15 * * * *" }
+```
+
+- Vercel injects `Authorization: Bearer $CRON_SECRET` when `CRON_SECRET` is set in project env.
+- Also accepts `x-cron-secret` or `?secret=` (prefer header).
+- Cron syncs **all** users with a linked Google account (Gmail upsert + Forms/Sheets → Submitted).
+- Hobby plan: Vercel Cron is limited (daily on some tiers); Pro supports `*/15`. Adjust schedule if the platform rejects the expression.
+
+## Sync behavior
+
+**On-demand** `POST /api/sync` (session auth): current user only.
+
+**Scheduled** `GET|POST /api/cron/sync` (`CRON_SECRET`): every Google-linked user.
+
+Both:
+
+1. Build Gmail `q` from enabled subject rules.
+2. Upsert `EmailEntry` (**Unread** for new; never downgrade status).
+3. Match Sheet/Forms tokens → **Submitted**.
+4. Update `User.lastSyncAt` / `lastSyncError` from the Gmail step.
+
+`/r/{trackingId}`: mark **Read** → redirect with form prefill.
+
+## What’s implemented vs remaining
 
 | Area | Status |
 | --- | --- |
-| Prisma models (User, Account/Session, SubjectRule, FormConfig, EmailEntry, StatusEvent) | Done |
-| Encrypted token helpers + adapter wrap on `linkAccount` | Done |
-| Auth.js Google sign-in (scopes listed above) | Done (needs real OAuth client) |
-| Settings: subject rules + form config + Sync now | Done (persists to DB) |
-| Dashboard list + status chips + Open form | Done (empty until sync creates rows) |
-| `/r/{trackingId}` → mark Read → redirect with prefill | Done |
-| Gmail subject sync | **Stub** — builds query / updates `lastSync*`; no live API |
-| Forms/Sheets response → Submitted | **Stub** — no live API; `markSubmittedByTrackingId` helper ready |
-| Deploy / cron jobs | Out of this scaffold |
+| Prisma + encrypted tokens + Auth.js Google | Done |
+| Settings / dashboard / `/r/{trackingId}` | Done |
+| Live Gmail + Forms/Sheets sync | Done |
+| Vercel Cron (`/api/cron/sync` + `CRON_SECRET`) | Done |
+| Gmail Pub/Sub push | Later |
+| Multi-form routing / digests | Out of MVP |
 
 ## Scripts
 
 ```bash
-npm run dev          # Next.js dev server
-npm run build        # production build
+npm run dev              # Next.js dev
+npm run build            # migrate deploy + next build (needs DATABASE_URL)
+npm run build:ci         # generate + next build (no migrate; local/CI without DB)
+npm run db:migrate:deploy
 npm run lint
-npx prisma migrate dev
-npx prisma generate
-npx prisma studio
 ```
 
 ## Security notes
 
-- All domain queries are scoped by `userId`.
-- Tracking links are UUIDs; status writes are idempotent and never downgrade Submitted.
-- Encrypt tokens with `encryptAccountTokens` / decrypt with `decryptAccountTokens` before Google API calls.
+- Domain queries scoped by `userId`.
+- Tracking links are UUIDs; status writes never downgrade Submitted.
+- Tokens encrypted at rest; cron endpoint rejects missing/invalid `CRON_SECRET` with timing-safe compare.

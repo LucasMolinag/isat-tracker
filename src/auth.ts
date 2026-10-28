@@ -52,4 +52,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   // Avoid hard crash during `next build` when secrets are absent in CI.
   trustHost: true,
   secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
+  // Surface misconfiguration early in production request paths.
+  logger: {
+    error(code, ...message) {
+      console.error("[auth]", code, ...message);
+    },
+  },
 });

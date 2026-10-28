@@ -1,23 +1,27 @@
 /**
- * Gmail subject-rule sync stub.
+ * Live Gmail subject-rule sync.
  *
- * Live path (TODO once Google OAuth + Gmail API credentials are wired):
- * 1. Load user's SubjectRule rows (enabled).
- * 2. Decrypt Account tokens via decryptAccountTokens.
- * 3. List messages with Gmail query: subject:(…) OR from rules.
- * 4. Upsert EmailEntry by gmailMessageId; new rows start Unread.
- * 5. Update User.lastSyncAt / lastSyncError.
+ * 1. Load enabled SubjectRule rows → Gmail `q`
+ * 2. List + get messages via Gmail API (readonly)
+ * 3. Upsert EmailEntry by gmailMessageId; new rows start Unread
+ * 4. Update User.lastSyncAt / lastSyncError
  */
 
 import type { EntryStatus, SubjectRule } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { decryptAccountTokens } from "@/lib/crypto";
+import { GoogleAuthError, googleJson, hasScope } from "@/lib/google-auth";
+
+const GMAIL_READONLY =
+  "https://www.googleapis.com/auth/gmail.readonly";
 
 export type SyncResult = {
   ok: boolean;
   upserted: number;
+  created: number;
+  scanned: number;
   message: string;
   stub: boolean;
+  query?: string;
 };
 
 /** Build a Gmail `q` string from subject rules. */
@@ -36,9 +40,93 @@ export function buildSubjectQuery(rules: SubjectRule[]): string {
   return parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
 }
 
+type GmailListResponse = {
+  messages?: Array<{ id: string; threadId: string }>;
+  nextPageToken?: string;
+  resultSizeEstimate?: number;
+};
+
+type GmailMessage = {
+  id: string;
+  internalDate?: string;
+  payload?: {
+    headers?: Array<{ name: string; value: string }>;
+  };
+};
+
+function headerValue(
+  headers: Array<{ name: string; value: string }> | undefined,
+  name: string,
+): string {
+  const hit = headers?.find(
+    (h) => h.name.toLowerCase() === name.toLowerCase(),
+  );
+  return hit?.value?.trim() ?? "";
+}
+
+function parseFromAddress(from: string): string {
+  const match = from.match(/<([^>]+)>/);
+  return (match?.[1] ?? from).trim() || "unknown";
+}
+
+async function listAllMessageIds(
+  userId: string,
+  query: string,
+  maxPages = 10,
+): Promise<string[]> {
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < maxPages; page++) {
+    const params = new URLSearchParams({
+      q: query,
+      maxResults: "100",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const data = await googleJson<GmailListResponse>(
+      userId,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
+    );
+
+    for (const m of data.messages ?? []) {
+      ids.push(m.id);
+    }
+
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  return ids;
+}
+
+async function getMessageMeta(
+  userId: string,
+  messageId: string,
+): Promise<{
+  subject: string;
+  fromAddress: string;
+  receivedAt: Date;
+}> {
+  const url =
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}` +
+    `?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
+
+  const msg = await googleJson<GmailMessage>(userId, url);
+
+  const headers = msg.payload?.headers;
+  const subject = headerValue(headers, "Subject") || "(no subject)";
+  const fromAddress = parseFromAddress(headerValue(headers, "From"));
+  const internalMs = msg.internalDate ? Number(msg.internalDate) : NaN;
+  const receivedAt = Number.isFinite(internalMs)
+    ? new Date(internalMs)
+    : new Date(headerValue(headers, "Date") || Date.now());
+
+  return { subject, fromAddress, receivedAt };
+}
+
 /**
  * Sync matching Gmail messages into EmailEntry for a user.
- * Currently a working stub: records sync attempt metadata without calling Gmail.
  */
 export async function syncGmailForUser(userId: string): Promise<SyncResult> {
   const rules = await prisma.subjectRule.findMany({ where: { userId } });
@@ -55,57 +143,111 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
     return {
       ok: false,
       upserted: 0,
+      created: 0,
+      scanned: 0,
       message: "Add at least one enabled subject rule in Settings.",
-      stub: true,
+      stub: false,
     };
   }
 
-  const account = await prisma.account.findFirst({
-    where: { userId, provider: "google" },
-  });
+  try {
+    // Warm / validate tokens + optional scope hint
+    const { getGoogleAccessToken } = await import("@/lib/google-auth");
+    const access = await getGoogleAccessToken(userId);
+    if (!hasScope(access.scope, GMAIL_READONLY)) {
+      throw new GoogleAuthError(
+        `Missing Gmail scope ${GMAIL_READONLY}. Reconnect Google and grant Gmail readonly.`,
+        "missing_tokens",
+      );
+    }
 
-  if (!account?.refresh_token && !account?.access_token) {
+    const formConfig = await prisma.formConfig.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const messageIds = await listAllMessageIds(userId, query);
+    let created = 0;
+    let upserted = 0;
+
+    for (const gmailMessageId of messageIds) {
+      const existing = await prisma.emailEntry.findUnique({
+        where: {
+          userId_gmailMessageId: { userId, gmailMessageId },
+        },
+      });
+
+      if (existing) {
+        // Keep status; optionally attach default form config if missing.
+        if (formConfig && !existing.formConfigId) {
+          await prisma.emailEntry.update({
+            where: { id: existing.id },
+            data: { formConfigId: formConfig.id },
+          });
+        }
+        upserted += 1;
+        continue;
+      }
+
+      const meta = await getMessageMeta(userId, gmailMessageId);
+      await prisma.emailEntry.create({
+        data: {
+          userId,
+          gmailMessageId,
+          subject: meta.subject,
+          fromAddress: meta.fromAddress,
+          receivedAt: meta.receivedAt,
+          status: "Unread",
+          formConfigId: formConfig?.id,
+        },
+      });
+      created += 1;
+      upserted += 1;
+    }
+
     await prisma.user.update({
       where: { id: userId },
       data: {
         lastSyncAt: new Date(),
-        lastSyncError: "Google account tokens missing — reconnect Google",
+        lastSyncError: null,
       },
     });
+
+    return {
+      ok: true,
+      upserted,
+      created,
+      scanned: messageIds.length,
+      message: `Gmail sync OK. query=${query}; scanned=${messageIds.length}; created=${created}; updated=${upserted - created}`,
+      stub: false,
+      query,
+    };
+  } catch (e) {
+    const message =
+      e instanceof GoogleAuthError
+        ? e.message
+        : e instanceof Error
+          ? e.message
+          : "Gmail sync failed";
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        lastSyncAt: new Date(),
+        lastSyncError: message,
+      },
+    });
+
     return {
       ok: false,
       upserted: 0,
-      message: "Sign in with Google and grant Gmail readonly access.",
-      stub: true,
+      created: 0,
+      scanned: 0,
+      message,
+      stub: false,
+      query,
     };
   }
-
-  // Prepare decrypted tokens for the future live client (do not log).
-  const _tokens = decryptAccountTokens({
-    access_token: account.access_token,
-    refresh_token: account.refresh_token,
-  });
-  void _tokens;
-
-  // TODO: call Gmail API users.messages.list with `q: query`, then messages.get,
-  // upsert EmailEntry { gmailMessageId, subject, fromAddress, receivedAt, status: Unread }.
-  // Prefer linking formConfigId from the user's default FormConfig when present.
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      lastSyncAt: new Date(),
-      lastSyncError:
-        "STUB: Gmail API not called yet. Query would be: " + query,
-    },
-  });
-
-  return {
-    ok: true,
-    upserted: 0,
-    message: `Gmail sync stub OK. Planned query: ${query}`,
-    stub: true,
-  };
 }
 
 /** Helper for tests / UI: create a demo entry without Gmail (dev only). */
