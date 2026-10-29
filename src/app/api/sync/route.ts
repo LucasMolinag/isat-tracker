@@ -7,8 +7,14 @@ import { assertRequiredEnv, missingEnvKeys } from "@/lib/env";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+function buildSummary(gmail: Awaited<ReturnType<typeof syncGmailForUser>>): string {
+  if (!gmail.ok) return gmail.message;
+  return `Synced ${gmail.scanned} emails · ${gmail.created} new`;
+}
+
 /**
- * POST /api/sync — Gmail upsert + Forms/Sheets → Submitted for the signed-in user.
+ * POST /api/sync — Gmail upsert for the signed-in user.
+ * Forms/Submitted matching is deferred (soft-skipped); Open form uses per-email URLs.
  * Scheduled multi-user sync lives at GET/POST /api/cron/sync (CRON_SECRET).
  */
 export async function POST() {
@@ -36,11 +42,23 @@ export async function POST() {
 
   const userId = session.user.id;
   const gmail = await syncGmailForUser(userId);
+  // Soft-skip: never surface Forms matcher noise in the Sync UX.
   const forms = await matchFormResponsesForUser(userId);
+  const summary = buildSummary(gmail);
 
-  const ok = gmail.ok && forms.ok;
   return NextResponse.json(
-    { ok, gmail, forms },
-    { status: ok ? 200 : 207 },
+    {
+      ok: gmail.ok,
+      summary,
+      gmail: { ...gmail, message: summary },
+      forms: {
+        ok: true,
+        stub: true,
+        matched: forms.matched,
+        scannedTokens: 0,
+        message: "",
+      },
+    },
+    { status: gmail.ok ? 200 : 502 },
   );
 }

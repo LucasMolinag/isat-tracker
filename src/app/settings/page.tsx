@@ -213,11 +213,12 @@ export default async function SettingsPage() {
       <section className="space-y-4">
         <h2 className="text-lg font-medium">Form config</h2>
         <p className="text-sm text-stone-600">
-          Open form uses the Google Form link parsed from each email body.
-          Settings form URL is only a fallback. Paste the tracking question’s{" "}
-          <code className="rounded bg-stone-100 px-1 text-xs">entry.XXXX</code>{" "}
-          field id for prefill, and optional response Sheet id for Submitted
-          matching.
+          Open form uses the Google Form link from each email (full prefill,
+          prefers{" "}
+          <code className="rounded bg-stone-100 px-1 text-xs">=3</code>). The
+          tracking field id is stored for Submitted matching later — open does
+          not overwrite an existing rating prefill. Submitted stays deferred
+          until Sheet responses are wired.
         </p>
         <form
           action={saveFormConfig}
@@ -245,11 +246,14 @@ export default async function SettingsPage() {
             />
           </label>
           <label className="block text-sm">
-            <span className="text-stone-600">Tracking entry field id</span>
+            <span className="text-stone-600">
+              Tracking entry field id (do not overwrite QoS{" "}
+              <code className="text-xs">=3</code> on open)
+            </span>
             <input
               name="entryFieldId"
               required
-              placeholder="entry.123456789 or 123456789"
+              placeholder="entry.2115622678"
               defaultValue={primaryForm?.entryFieldId ?? ""}
               className="mt-1 w-full rounded-md border border-stone-300 px-3 py-2"
             />
@@ -275,11 +279,10 @@ export default async function SettingsPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Sync</h2>
         <p className="text-sm text-stone-600">
-          Runs Gmail upsert + Forms/Sheets matcher for your mailbox.
+          Pulls matching Jira survey emails and refreshes each entry’s form
+          link.
         </p>
-        <div className="max-w-xs">
-          <SyncButton />
-        </div>
+        <SyncButton />
       </section>
     </main>
   );

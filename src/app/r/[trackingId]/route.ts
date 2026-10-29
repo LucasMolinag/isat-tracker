@@ -7,9 +7,9 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /r/{trackingId}
- * Marks the entry Read (never downgrades Submitted), then redirects to the
- * Google Form URL extracted from that email (preferred). Prefills trackingId
- * into FormConfig.entryFieldId when configured.
+ * Marks the entry Read only (never Submitted — that requires a real Google
+ * Form submit, detected later via Sheet/Forms matcher). Redirects to the
+ * per-email Google Form URL. Does not overwrite QoS rating prefills (=3).
  */
 export async function GET(
   _request: Request,
@@ -29,15 +29,16 @@ export async function GET(
     );
   }
 
-  // Idempotent: Submitted wins if already submitted.
+  // Open → Read only. Never Submitted on click/open.
   await transitionEntryStatus(entry.id, "Read", "open tracked form link");
 
-  const formUrl = entry.formUrl ?? entry.formConfig?.formUrl ?? null;
+  // Per-email form URL only — no Settings FormConfig.formUrl fallback.
+  const formUrl = entry.formUrl;
   if (!formUrl) {
     return NextResponse.json(
       {
         error:
-          "No Google Form URL on this email (and no FormConfig fallback). Re-sync after the message includes a forms link.",
+          "No Google Form URL on this email. Re-sync after the message includes a forms link.",
         trackingId,
         status: entry.status,
       },
@@ -45,6 +46,8 @@ export async function GET(
     );
   }
 
+  // Preserves existing prefills (e.g. entry.2115622678=3); does not inject
+  // tracking UUID over the QoS rating field.
   const target = buildTrackedFormUrl(
     formUrl,
     entry.formConfig?.entryFieldId,

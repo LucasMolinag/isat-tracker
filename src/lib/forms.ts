@@ -1,9 +1,6 @@
 /**
- * Live Google Forms / Sheets response matcher.
- *
- * Prefers linked response Sheet (cell text contains trackingId).
- * Falls back to Forms API responses.list when a form id can be resolved.
- * Matches → transitionEntryStatus(..., "Submitted") — never downgrades.
+ * Google Forms helpers: extract per-email form URLs from message bodies,
+ * optional tracking prefill, and Sheets/Forms Submitted matching.
  */
 
 import type { FormConfig } from "@prisma/client";
@@ -30,65 +27,149 @@ export type MatchResult = {
   details?: string[];
 };
 
-const GOOGLE_FORM_URL_RE =
-  /https?:\/\/(?:docs\.google\.com\/forms|forms\.gle)\/[^\s"'<>\\]+/gi;
+const GOOGLE_FORM_HOST =
+  /(?:docs\.google\.com\/forms|forms\.gle)\//i;
 
-/** Strip trailing punctuation commonly glued to URLs in email prose. */
-function cleanExtractedUrl(raw: string): string {
-  let url = raw.trim();
-  url = url.replace(/&amp;/gi, "&");
-  url = url.replace(/[),.;\]]+$/g, "");
-  // Prefer viewform over formResponse endpoints when both appear as prefixes.
-  return url;
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
+      String.fromCharCode(parseInt(h, 16)),
+    );
 }
 
 /**
- * Extract the first Google Forms / forms.gle URL from plain or HTML email body.
+ * Unwrap common Google redirect wrappers:
+ * https://www.google.com/url?q=<encoded formUrl>&sa=D...
  */
-export function extractGoogleFormUrl(body: string): string | null {
-  if (!body) return null;
-  const matches = body.match(GOOGLE_FORM_URL_RE);
-  if (!matches?.length) return null;
-
-  const cleaned = matches.map(cleanExtractedUrl);
-  // Prefer explicit forms.google / viewform links over shortened forms.gle when both exist.
-  const preferred =
-    cleaned.find((u) => /docs\.google\.com\/forms/i.test(u)) ?? cleaned[0]!;
+function unwrapGoogleRedirect(raw: string): string {
   try {
-    // Validate
-    new URL(preferred);
-    return preferred;
+    const u = new URL(raw);
+    if (
+      (u.hostname === "www.google.com" || u.hostname === "google.com") &&
+      u.pathname === "/url"
+    ) {
+      const q = u.searchParams.get("q") || u.searchParams.get("url");
+      if (q && GOOGLE_FORM_HOST.test(q)) return q;
+    }
+  } catch {
+    // ignore
+  }
+  return raw;
+}
+
+/**
+ * Normalize a candidate form URL: decode entities, unwrap redirects,
+ * collapse whitespace/newlines inside the URL, encode spaces in query.
+ */
+export function normalizeGoogleFormUrl(raw: string): string | null {
+  let s = decodeHtmlEntities(raw.trim());
+  s = unwrapGoogleRedirect(s);
+  // Soft line wraps in plain-text emails: "Lucas\r\nMolina"
+  s = s.replace(/[\r\n\t]+/g, "");
+  // Trim trailing junk often glued in prose (not part of query)
+  s = s.replace(/[),.;\]]+$/g, "");
+
+  if (!GOOGLE_FORM_HOST.test(s)) return null;
+
+  try {
+    // Encode literal spaces in path/query so URL() accepts them.
+    const encoded = s.replace(/ /g, "%20");
+    const url = new URL(encoded);
+    if (!GOOGLE_FORM_HOST.test(url.href)) return null;
+    return url.href;
   } catch {
     return null;
   }
 }
 
+function collectHrefCandidates(body: string): string[] {
+  const out: string[] = [];
+  const hrefRe = /href\s*=\s*(["'])(.*?)\1/gi;
+  let m: RegExpExecArray | null;
+  while ((m = hrefRe.exec(body))) {
+    const href = m[2] ?? "";
+    if (GOOGLE_FORM_HOST.test(href) || /google\.com\/url/i.test(href)) {
+      out.push(href);
+    }
+  }
+  return out;
+}
+
+function collectLooseCandidates(body: string): string[] {
+  // Allow spaces/%20 inside query so "Lucas Molina" is not truncated.
+  const re =
+    /https?:\/\/(?:docs\.google\.com\/forms|forms\.gle|www\.google\.com\/url)\/[^\s"'<>\\]+(?:[ \t]*[^\s"'<>\\]+)*/gi;
+  return body.match(re) ?? [];
+}
+
 /**
- * Build a Google Form prefill URL with the tracking token in entry.<fieldId>.
- * If entryFieldId is missing/placeholder, returns the form URL unchanged.
+ * Extract the Google Forms URL from plain/HTML email body.
+ * Prefers href=… candidates; when several form links exist, prefers the one
+ * whose URL ends with `=3` (Jira survey “Good” / third star).
+ * Always keeps the full prefilled query string.
+ */
+export function extractGoogleFormUrl(body: string): string | null {
+  if (!body) return null;
+
+  const decoded = decodeHtmlEntities(body);
+  const rawCandidates = [
+    ...collectHrefCandidates(decoded),
+    ...collectHrefCandidates(body),
+    ...collectLooseCandidates(decoded),
+    ...collectLooseCandidates(body),
+  ];
+
+  const normalized = rawCandidates
+    .map(normalizeGoogleFormUrl)
+    .filter((u): u is string => Boolean(u));
+
+  if (normalized.length === 0) return null;
+
+  // De-dupe while preserving order
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const u of normalized) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    unique.push(u);
+  }
+
+  const preferDocs = unique.filter((u) => /docs\.google\.com\/forms/i.test(u));
+  const pool = preferDocs.length > 0 ? preferDocs : unique;
+
+  // Jira survey templates ship one link per star (…=1 …=5). Prefer the “Good” (=3) link.
+  const endsWith3 = pool.find((u) => {
+    try {
+      const href = new URL(u).href.replace(/#.*$/, "");
+      return href.endsWith("=3");
+    } catch {
+      return /[=]3$/i.test(u.trim().replace(/#.*$/, ""));
+    }
+  });
+  if (endsWith3) return endsWith3;
+
+  return pool[0]!;
+}
+
+/**
+ * Optional tracking prefill. Never overwrites an existing query value —
+ * entry.2115622678 is the QoS 1–5 rating often prefilled as `=3`; injecting
+ * the tracking UUID would break the rating. Submitted detection should use
+ * Sheet/Forms responses later, not open-time overwrites.
  */
 export function buildTrackedFormUrl(
   formUrl: string,
   entryFieldId: string | null | undefined,
   trackingId: string,
 ): string {
-  const base = formUrl.split("?")[0] ?? formUrl;
-  let viewUrl = base.includes("/viewform")
-    ? base
-    : base.replace(/\/edit$/, "/viewform");
-
-  // forms.gle short links: leave as-is (can't append entry. without resolving).
-  if (/forms\.gle\//i.test(formUrl) && !entryFieldId) {
-    return formUrl;
-  }
-
   if (!entryFieldId || entryFieldId === "NEEDS_ENTRY_FIELD_ID") {
     return formUrl;
-  }
-
-  if (!viewUrl.includes("/viewform") && /docs\.google\.com\/forms/i.test(viewUrl)) {
-    // Keep original if we can't normalize; still try query append on original.
-    viewUrl = formUrl.split("?")[0] ?? formUrl;
   }
 
   const field = entryFieldId.startsWith("entry.")
@@ -96,13 +177,14 @@ export function buildTrackedFormUrl(
     : `entry.${entryFieldId}`;
 
   try {
-    // Preserve existing prefill params from the email (ticket id, assignee, …)
-    // and append/overwrite only the tracking field.
-    const url = new URL(
-      /docs\.google\.com\/forms/i.test(formUrl) ? formUrl : viewUrl,
-    );
+    const url = new URL(formUrl);
+    const existing = url.searchParams.get(field);
+    if (existing !== null && existing !== "") {
+      // Preserve email prefill (e.g. =3). Do not replace with trackingId.
+      return formUrl;
+    }
     url.searchParams.set(field, trackingId);
-    return url.toString();
+    return url.href;
   } catch {
     return formUrl;
   }
@@ -112,9 +194,7 @@ export function buildTrackedFormUrl(
 export function extractSpreadsheetId(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  const fromUrl = trimmed.match(
-    /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/,
-  );
+  const fromUrl = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (fromUrl?.[1]) return fromUrl[1];
   if (/^[a-zA-Z0-9-_]+$/.test(trimmed)) return trimmed;
   return null;
@@ -125,7 +205,6 @@ export function extractSpreadsheetId(raw: string): string | null {
  */
 export function extractFormsApiFormId(formUrl: string): string | null {
   const trimmed = formUrl.trim();
-  // Prefer non-/e/ edit id
   const edit = trimmed.match(/\/forms\/d\/([a-zA-Z0-9-_]+)/);
   if (edit?.[1] && edit[1] !== "e") return edit[1];
   return null;
@@ -148,7 +227,6 @@ async function fetchSheetTokens(
   userId: string,
   spreadsheetId: string,
 ): Promise<string[]> {
-  // Prefer the default Forms-linked tab, then a wide first-sheet read.
   const ranges = ["'Form Responses 1'", "Sheet1", "A:ZZ"];
   const tokens: string[] = [];
   let lastError: unknown;
@@ -234,7 +312,6 @@ async function matchTokensToEntries(
     openEntries.map((e) => [e.trackingId.toLowerCase(), e]),
   );
 
-  // Exact cell/answer match, or cell containing the UUID.
   const matchedIds = new Set<string>();
   for (const raw of foundValues) {
     const value = raw.trim();
@@ -299,20 +376,36 @@ async function matchOneConfig(
 }
 
 /**
+ * Submitted matching via Sheets/Forms is deferred. Soft-skip silently so Sync
+ * UX stays a short Gmail summary (Open form already uses per-email formUrl).
+ */
+const FORMS_MATCHER_DEFERRED = true;
+
+/**
  * Match form/sheet responses to EmailEntry.trackingId → Submitted.
  */
 export async function matchFormResponsesForUser(
   userId: string,
 ): Promise<MatchResult> {
+  if (FORMS_MATCHER_DEFERRED) {
+    return {
+      ok: true,
+      matched: 0,
+      scannedTokens: 0,
+      message: "",
+      stub: true,
+    };
+  }
+
   const configs = await prisma.formConfig.findMany({ where: { userId } });
 
   if (configs.length === 0) {
     return {
-      ok: false,
+      ok: true,
       matched: 0,
       scannedTokens: 0,
-      message: "No form configs — add form URL + entry field id in Settings.",
-      stub: false,
+      message: "",
+      stub: true,
     };
   }
 
@@ -330,10 +423,16 @@ export async function matchFormResponsesForUser(
       );
     }
     if (needsForms && !hasScope(access.scope, FORMS_RESPONSES_READONLY)) {
-      throw new GoogleAuthError(
-        `Missing Forms responses scope ${FORMS_RESPONSES_READONLY}. Reconnect Google, or set responseSheetId to use Sheets instead.`,
-        "missing_tokens",
-      );
+      // Soft-skip when Forms scope missing and we're not relying on it for Open form.
+      return {
+        ok: true,
+        matched: 0,
+        scannedTokens: 0,
+        message:
+          "Forms responses scope missing — Submitted matching skipped for now.",
+        stub: false,
+        details,
+      };
     }
 
     let matched = 0;
