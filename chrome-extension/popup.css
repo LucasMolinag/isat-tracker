@@ -197,6 +197,30 @@ h1 {
   pointer-events: none;
 }
 
+.done-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  background: #fafbfc;
+  cursor: pointer;
+  user-select: none;
+}
+
+.done-label:hover {
+  background: #eef2f4;
+}
+
+.done-label input {
+  margin: 0;
+  cursor: pointer;
+}
+
 .footer {
   display: flex;
   justify-content: space-between;

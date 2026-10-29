@@ -1,7 +1,7 @@
 /**
  * Local per-message status (chrome.storage.local).
- * Unread → Read when Open Form is clicked.
- * Submitted reserved for a future Sheet matcher (not set in MVP).
+ * - Unread → Read when Open Form is clicked (also flags "opened")
+ * - Done checkbox → Submitted; uncheck → Read if opened else Unread
  */
 
 export const STATUS = {
@@ -10,59 +10,105 @@ export const STATUS = {
   Submitted: "Submitted",
 };
 
-const STORAGE_KEY = "messageStatus";
+const STATUS_KEY = "messageStatus";
+const OPENED_KEY = "messageOpened";
 
-const RANK = {
-  Unread: 0,
-  Read: 1,
-  Submitted: 2,
-};
-
-async function readMap() {
-  const data = await chrome.storage.local.get(STORAGE_KEY);
-  return data[STORAGE_KEY] && typeof data[STORAGE_KEY] === "object"
-    ? data[STORAGE_KEY]
-    : {};
-}
-
-async function writeMap(map) {
-  await chrome.storage.local.set({ [STORAGE_KEY]: map });
-}
-
-/** @param {string} messageId */
-export async function getStatus(messageId) {
-  const map = await readMap();
-  const value = map[messageId];
+function normalizeStatus(value) {
   if (value === STATUS.Read || value === STATUS.Submitted) return value;
   return STATUS.Unread;
 }
 
+async function readStatusMap() {
+  const data = await chrome.storage.local.get(STATUS_KEY);
+  return data[STATUS_KEY] && typeof data[STATUS_KEY] === "object"
+    ? data[STATUS_KEY]
+    : {};
+}
+
+async function readOpenedMap() {
+  const data = await chrome.storage.local.get(OPENED_KEY);
+  return data[OPENED_KEY] && typeof data[OPENED_KEY] === "object"
+    ? data[OPENED_KEY]
+    : {};
+}
+
+/** @param {string} messageId */
+export async function getStatus(messageId) {
+  const map = await readStatusMap();
+  return normalizeStatus(map[messageId]);
+}
+
+/** @param {string} messageId */
+export async function wasOpened(messageId) {
+  const opened = await readOpenedMap();
+  if (opened[messageId]) return true;
+  // Legacy: Read/Submitted without opened flag ⇒ treat as opened.
+  const status = await getStatus(messageId);
+  return status === STATUS.Read || status === STATUS.Submitted;
+}
+
 /**
- * Never downgrade (Unread < Read < Submitted).
+ * Open Form: mark opened + Read (does not clear Submitted).
  * @param {string} messageId
- * @param {"Unread"|"Read"|"Submitted"} toStatus
  */
+export async function markFormOpened(messageId) {
+  if (!messageId) return STATUS.Unread;
+  const statusMap = await readStatusMap();
+  const openedMap = await readOpenedMap();
+  openedMap[messageId] = true;
+  const current = normalizeStatus(statusMap[messageId]);
+  if (current !== STATUS.Submitted) {
+    statusMap[messageId] = STATUS.Read;
+  }
+  await chrome.storage.local.set({
+    [STATUS_KEY]: statusMap,
+    [OPENED_KEY]: openedMap,
+  });
+  return normalizeStatus(statusMap[messageId]);
+}
+
+/**
+ * Manual Done checkbox.
+ * checked → Submitted; unchecked → Read if opened else Unread.
+ * @param {string} messageId
+ * @param {boolean} done
+ */
+export async function setDone(messageId, done) {
+  if (!messageId) return STATUS.Unread;
+  const statusMap = await readStatusMap();
+  const openedMap = await readOpenedMap();
+  const opened =
+    Boolean(openedMap[messageId]) ||
+    normalizeStatus(statusMap[messageId]) === STATUS.Read ||
+    normalizeStatus(statusMap[messageId]) === STATUS.Submitted;
+
+  if (done) {
+    statusMap[messageId] = STATUS.Submitted;
+  } else {
+    statusMap[messageId] = opened ? STATUS.Read : STATUS.Unread;
+  }
+
+  await chrome.storage.local.set({
+    [STATUS_KEY]: statusMap,
+    [OPENED_KEY]: openedMap,
+  });
+  return normalizeStatus(statusMap[messageId]);
+}
+
+/** @deprecated use markFormOpened — kept for call sites expecting setStatus(Read) */
 export async function setStatus(messageId, toStatus) {
-  if (!messageId || !(toStatus in RANK)) return STATUS.Unread;
-  const map = await readMap();
-  const current = map[messageId] || STATUS.Unread;
-  if (RANK[toStatus] <= RANK[current]) return current;
-  map[messageId] = toStatus;
-  // Await the write so callers can finish before the popup unloads.
-  await chrome.storage.local.set({ [STORAGE_KEY]: map });
-  return toStatus;
+  if (toStatus === STATUS.Read) return markFormOpened(messageId);
+  if (toStatus === STATUS.Submitted) return setDone(messageId, true);
+  if (toStatus === STATUS.Unread) return setDone(messageId, false);
+  return getStatus(messageId);
 }
 
 /** @param {string[]} messageIds */
 export async function getStatuses(messageIds) {
-  const map = await readMap();
+  const map = await readStatusMap();
   const out = {};
   for (const id of messageIds) {
-    const value = map[id];
-    out[id] =
-      value === STATUS.Read || value === STATUS.Submitted
-        ? value
-        : STATUS.Unread;
+    out[id] = normalizeStatus(map[id]);
   }
   return out;
 }

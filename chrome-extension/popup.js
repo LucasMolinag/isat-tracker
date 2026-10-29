@@ -1,4 +1,9 @@
-import { getStatuses, setStatus, STATUS } from "./lib/status.js";
+import {
+  getStatuses,
+  markFormOpened,
+  setDone,
+  STATUS,
+} from "./lib/status.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -80,7 +85,7 @@ function renderEmails(emails, statusById) {
         ? "Not opened yet"
         : status === STATUS.Read
           ? "Open Form was clicked"
-          : "Marked submitted (Sheet match — coming later)";
+          : "Marked done (Submitted)";
     top.appendChild(chip);
 
     const subject = document.createElement("p");
@@ -116,8 +121,6 @@ function renderEmails(emails, statusById) {
     const form = document.createElement("a");
     form.textContent = "Open Form";
     if (entry.formUrl) {
-      // Use button-like link: do NOT use target=_blank directly — the popup
-      // closes as soon as a new tab opens, aborting async setStatus.
       form.href = entry.formUrl;
       form.rel = "noopener noreferrer";
       form.addEventListener("click", async (e) => {
@@ -127,17 +130,15 @@ function renderEmails(emails, statusById) {
         const formUrl = entry.formUrl;
         if (!messageId || !formUrl) return;
 
-        // Persist Read BEFORE opening a tab (popup may unload right after).
-        await setStatus(messageId, STATUS.Read);
+        // Persist Read/opened BEFORE opening a tab (popup may unload).
+        await markFormOpened(messageId);
 
         try {
           await chrome.tabs.create({ url: formUrl, active: true });
         } catch {
-          // Fallback if tabs API unavailable
           window.open(formUrl, "_blank", "noopener,noreferrer");
         }
 
-        // Re-render if popup is still open.
         if (document.body) {
           await paintEmails(currentEmails);
         }
@@ -148,6 +149,27 @@ function renderEmails(emails, statusById) {
       form.addEventListener("click", (e) => e.preventDefault());
     }
     actions.appendChild(form);
+
+    const doneLabel = document.createElement("label");
+    doneLabel.className = "done-label";
+    doneLabel.title = "Mark as Submitted (local)";
+    const doneBox = document.createElement("input");
+    doneBox.type = "checkbox";
+    doneBox.checked = status === STATUS.Submitted;
+    doneBox.addEventListener("change", async () => {
+      doneBox.disabled = true;
+      try {
+        await setDone(entry.id, doneBox.checked);
+        await paintEmails(currentEmails);
+      } finally {
+        doneBox.disabled = false;
+      }
+    });
+    const doneText = document.createElement("span");
+    doneText.textContent = "Done";
+    doneLabel.appendChild(doneBox);
+    doneLabel.appendChild(doneText);
+    actions.appendChild(doneLabel);
 
     li.appendChild(actions);
     listEl.appendChild(li);
@@ -161,7 +183,7 @@ async function paintEmails(emails) {
   for (const id of Object.keys(statuses)) {
     counts[statuses[id]] = (counts[statuses[id]] || 0) + 1;
   }
-  metaEl.textContent = `${(emails || []).length} emails · ${counts.Unread} unread · ${counts.Read} read`;
+  metaEl.textContent = `${(emails || []).length} emails · ${counts.Unread} unread · ${counts.Read} read · ${counts.Submitted} done`;
 }
 
 function setConnectedUi(connected) {

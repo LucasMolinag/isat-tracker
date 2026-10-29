@@ -4,7 +4,7 @@ Simple MV3 popup that lists Jira ISAT survey emails from Gmail and opens:
 
 - **Open Form** — full prefilled Google Form URL (prefers links ending in `=3`)
 - **Open Ticket** — `https://glia.atlassian.net/browse/{KEY}`
-- **Status chip** — local **Unread** until you click Open Form → **Read** (persists in `chrome.storage.local`). **Submitted** is reserved for a future Sheet match and is not set in this MVP.
+- **Status chip** — local **Unread** → **Read** on Open Form; **Done** checkbox → **Submitted** (uncheck returns to Read if opened, else Unread). Persists in `chrome.storage.local`.
 
 No Neon/Vercel backend required.
 
@@ -85,24 +85,24 @@ Still **never** commit or paste `client_secret` into the extension.
 
 ## Package `chrome-extension-only.zip`
 
-From the **repo root** (so the zip contains `manifest.json` at the top level when extracted… or pack the folder itself):
+Rebuild after every change before sharing:
 
 ```bash
-# From repo root — zip the chrome-extension folder contents for Load unpacked / sharing
+# From repo root
 cd chrome-extension
+rm -f ../chrome-extension-only.zip
 zip -r ../chrome-extension-only.zip . \
   -x '*.DS_Store' -x '*~' -x '*.map'
 cd ..
+ls -la chrome-extension-only.zip
 ```
 
-Then either:
+Then:
 
-- **Load unpacked** from the `chrome-extension/` folder (preferred while developing), or  
-- Unzip `chrome-extension-only.zip` to a folder and Load unpacked that folder.
+- **Dev:** Load unpacked → `chrome-extension/` folder, click **Reload** on `chrome://extensions`  
+- **Share:** Unzip `chrome-extension-only.zip` to a folder → Load unpacked that folder  
 
-Do **not** put `client_secret` or `.env` files in the zip. The public `key` + `oauth2.client_id` in `manifest.json` are fine.
-
-Rebuild the zip whenever you change extension files before sharing a new build.
+Do **not** put `client_secret` or `.env` in the zip. `chrome-extension-only.zip` is gitignored.
 
 ## What it queries
 
@@ -116,9 +116,10 @@ Scope: `gmail.readonly` only (no Drive).
 
 1. **Connect Google**  
 2. **Refresh**  
-3. Status starts **Unread**; **Open Form** awaits a local storage write to **Read**, then opens the form in a new tab (so the popup unload cannot abort the write)  
-4. **Open Ticket** does not change status  
-5. Keys are stable Gmail `messages.id` values in `chrome.storage.local.messageStatus`  
+3. Status starts **Unread**; **Open Form** awaits local **Read** (and “opened”), then opens a tab  
+4. **Done** checkbox → **Submitted**; uncheck → **Read** if Open Form was used, else **Unread**  
+5. **Open Ticket** does not change status  
+6. Keys: Gmail `messages.id` in `chrome.storage.local.messageStatus` (+ `messageOpened`)  
 
 ## Layout
 
