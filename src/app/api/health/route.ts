@@ -5,7 +5,8 @@ import { prisma } from "@/lib/prisma";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/health — liveness, env key presence (no values), and a DB ping.
+ * GET /api/health — liveness, env key presence (never values), DB ping.
+ * Does not expose user counts or other tenant metrics.
  */
 export async function GET() {
   const checklist = envChecklist();
@@ -14,18 +15,13 @@ export async function GET() {
     .every((r) => r.present);
   const cronReady = checklist.find((r) => r.key === "CRON_SECRET")?.present;
 
-  let database: { ok: boolean; userCount?: number; error?: string } = {
-    ok: false,
-  };
+  let database: { ok: boolean; error?: string } = { ok: false };
 
   try {
-    const userCount = await prisma.user.count();
-    database = { ok: true, userCount };
-  } catch (e) {
-    database = {
-      ok: false,
-      error: e instanceof Error ? e.message : "Database unreachable",
-    };
+    await prisma.$queryRaw`SELECT 1`;
+    database = { ok: true };
+  } catch {
+    database = { ok: false, error: "Database unreachable" };
   }
 
   return NextResponse.json({

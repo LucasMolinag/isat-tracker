@@ -94,10 +94,12 @@ export default async function SettingsPage() {
     const label = String(formData.get("label") ?? "").trim() || null;
     if (!formUrl || !entryFieldId) return;
 
-    const existing = await prisma.formConfig.findFirst({ where: { userId: uid } });
+    const existing = await prisma.formConfig.findFirst({
+      where: { userId: uid },
+    });
     if (existing) {
-      await prisma.formConfig.update({
-        where: { id: existing.id },
+      await prisma.formConfig.updateMany({
+        where: { id: existing.id, userId: uid },
         data: { formUrl, entryFieldId, responseSheetId, label },
       });
     } else {

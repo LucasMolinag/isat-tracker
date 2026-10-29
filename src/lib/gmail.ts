@@ -11,6 +11,7 @@ import type { EntryStatus, SubjectRule } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { GoogleAuthError, googleJson, hasScope } from "@/lib/google-auth";
 import { extractGoogleFormUrl } from "@/lib/forms";
+import { sanitizePublicError } from "@/lib/security";
 
 const GMAIL_READONLY =
   "https://www.googleapis.com/auth/gmail.readonly";
@@ -297,12 +298,13 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
       query,
     };
   } catch (e) {
-    const message =
+    const raw =
       e instanceof GoogleAuthError
         ? e.message
         : e instanceof Error
           ? e.message
           : "Gmail sync failed";
+    const message = sanitizePublicError(raw);
 
     await prisma.user.update({
       where: { id: userId },
@@ -319,7 +321,7 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
       scanned: 0,
       message,
       stub: false,
-      query,
+      // Omit query from error payloads (addresses/subjects).
     };
   }
 }

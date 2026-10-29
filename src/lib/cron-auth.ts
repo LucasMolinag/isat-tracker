@@ -1,12 +1,13 @@
 import { timingSafeEqual } from "crypto";
+import { isProduction } from "@/lib/env";
 
 /**
  * Authorize Vercel Cron (or manual) callers via CRON_SECRET.
  *
  * Accepted:
- * - Authorization: Bearer <CRON_SECRET>  (Vercel Cron default when CRON_SECRET is set)
+ * - Authorization: Bearer <CRON_SECRET>  (Vercel Cron default)
  * - x-cron-secret: <CRON_SECRET>
- * - ?secret=<CRON_SECRET> query (manual triggers only; prefer header in prod)
+ * - ?secret= only in non-production (query secrets leak via logs/Referer)
  */
 export function assertCronAuthorized(request: Request): {
   ok: boolean;
@@ -24,8 +25,7 @@ export function assertCronAuthorized(request: Request): {
   if (!provided) {
     return {
       ok: false,
-      reason:
-        "Missing cron secret (Authorization: Bearer, x-cron-secret, or ?secret=)",
+      reason: "Missing cron secret (Authorization: Bearer or x-cron-secret)",
     };
   }
 
@@ -45,12 +45,14 @@ function extractCronSecret(request: Request): string | null {
   const header = request.headers.get("x-cron-secret");
   if (header?.trim()) return header.trim();
 
-  try {
-    const url = new URL(request.url);
-    const q = url.searchParams.get("secret");
-    if (q?.trim()) return q.trim();
-  } catch {
-    // ignore
+  if (!isProduction()) {
+    try {
+      const url = new URL(request.url);
+      const q = url.searchParams.get("secret");
+      if (q?.trim()) return q.trim();
+    } catch {
+      // ignore
+    }
   }
 
   return null;

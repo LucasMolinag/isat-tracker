@@ -40,6 +40,14 @@ export function SyncButton() {
         error?: string;
       };
 
+      if (res.status === 429) {
+        setToast({
+          kind: "err",
+          text: data.error || "Too many syncs — wait a moment",
+        });
+        return;
+      }
+
       if (!res.ok || data.ok === false) {
         setToast({
           kind: "err",

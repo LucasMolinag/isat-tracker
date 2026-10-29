@@ -3,6 +3,11 @@ import { auth } from "@/auth";
 import { syncGmailForUser } from "@/lib/gmail";
 import { matchFormResponsesForUser } from "@/lib/forms";
 import { assertRequiredEnv, missingEnvKeys } from "@/lib/env";
+import {
+  assertSameOrigin,
+  assertSyncRateLimit,
+  sanitizePublicError,
+} from "@/lib/security";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,7 +16,7 @@ function buildSummary(
   gmail: Awaited<ReturnType<typeof syncGmailForUser>>,
   forms: Awaited<ReturnType<typeof matchFormResponsesForUser>>,
 ): string {
-  if (!gmail.ok) return gmail.message;
+  if (!gmail.ok) return sanitizePublicError(gmail.message);
   let summary = `Synced ${gmail.scanned} emails · ${gmail.created} new`;
   if (forms.matched > 0) {
     summary += ` · ${forms.matched} submitted`;
@@ -20,14 +25,37 @@ function buildSummary(
 }
 
 /**
- * POST /api/sync — Gmail upsert + quiet Submitted matching for the signed-in user.
- * Submitted comes from Sheet/Forms responses (ticket key), never from Open form.
- * Scheduled multi-user sync lives at GET/POST /api/cron/sync (CRON_SECRET).
+ * POST /api/sync — session + same-origin + rate-limited.
+ * Gmail upsert + quiet Submitted matching for the signed-in user only.
  */
-export async function POST() {
+export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const csrf = assertSameOrigin(request);
+  if (!csrf.ok) {
+    return NextResponse.json(
+      { error: "Forbidden", detail: csrf.reason },
+      { status: 403 },
+    );
+  }
+
+  const rate = assertSyncRateLimit(session.user.id);
+  if (!rate.ok) {
+    return NextResponse.json(
+      {
+        error: "Too many sync requests. Try again shortly.",
+        retryAfterSec: rate.retryAfterSec,
+      },
+      {
+        status: 429,
+        headers: rate.retryAfterSec
+          ? { "Retry-After": String(rate.retryAfterSec) }
+          : undefined,
+      },
+    );
   }
 
   try {
@@ -56,7 +84,14 @@ export async function POST() {
     {
       ok: gmail.ok,
       summary,
-      gmail: { ...gmail, message: summary },
+      gmail: {
+        ok: gmail.ok,
+        created: gmail.created,
+        upserted: gmail.upserted,
+        scanned: gmail.scanned,
+        message: summary,
+        // Intentionally omit Gmail `query` (may include addresses/subjects).
+      },
       forms: {
         ok: true,
         stub: forms.stub,

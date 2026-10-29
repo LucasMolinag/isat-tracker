@@ -23,14 +23,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           // Offline access so we can sync Gmail/Forms in the background.
           access_type: "offline",
           prompt: "consent",
+          // Minimal scopes — no Drive. Submitted matching uses Sheets.
+          // forms.responses.readonly is optional (edit-URL Forms API path only).
           scope: [
             "openid",
             "email",
             "profile",
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/spreadsheets.readonly",
-            // Forms responses if Forms API is enabled in GCP:
-            "https://www.googleapis.com/auth/forms.responses.readonly",
           ].join(" "),
         },
       },
