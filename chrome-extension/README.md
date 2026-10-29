@@ -16,7 +16,7 @@ fldldeffedenajeiaeodlhajihlligda
 Current `oauth2.client_id`:
 
 ```
-860318366086-o9dfo14prko87bgetr3t5r210f0djpjv.apps.googleusercontent.com
+860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho.apps.googleusercontent.com
 ```
 
 ---
