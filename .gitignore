@@ -43,3 +43,4 @@ yarn-error.log*
 next-env.d.ts
 .neon
 chrome-extension-only.zip
+chrome-extension-autosubmit-test-only.zip

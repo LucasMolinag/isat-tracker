@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ISAT Tracker (AUTO-SUBMIT TEST)</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="test-banner" role="note">
+      TEST ONLY — auto-submits Google Forms. Do not use as the main extension.
+    </div>
+    <header class="header">
+      <div>
+        <h1>ISAT Tracker <span class="test-tag">AUTO-SUBMIT TEST</span></h1>
+        <p class="sub">Open Form opens + clicks Submit, then marks Done</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btn-refresh" class="btn btn-ghost" hidden>
+          Refresh
+        </button>
+        <button type="button" id="btn-auth" class="btn btn-primary">
+          Connect Google
+        </button>
+      </div>
+    </header>
+
+    <p id="status" class="status" role="status"></p>
+
+    <div class="filter-bar" id="filter-bar" hidden>
+      <label class="filter-label" title="Show emails marked Done / Submitted">
+        <input type="checkbox" id="chk-show-done" />
+        <span>Show done</span>
+      </label>
+    </div>
+
+    <ul id="list" class="list" aria-live="polite"></ul>
+
+    <footer class="footer">
+      <span id="meta"></span>
+      <button type="button" id="btn-disconnect" class="linkish" hidden>
+        Disconnect
+      </button>
+    </footer>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

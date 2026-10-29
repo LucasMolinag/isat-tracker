@@ -1,0 +1,7 @@
+{
+  "name": "isat-tracker-chrome-extension-autosubmit-test",
+  "private": true,
+  "version": "0.1.6",
+  "description": "TEST ONLY — ISAT Tracker variant that auto-submits Google Forms. Not for daily use.",
+  "type": "module"
+}
