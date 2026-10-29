@@ -4,8 +4,9 @@ Simple MV3 popup that lists Jira ISAT survey emails from Gmail and opens:
 
 - **Open Form** — full prefilled Google Form URL (prefers links ending in `=3`)
 - **Open Ticket** — `https://glia.atlassian.net/browse/{KEY}`
+- **Status chip** — local **Unread** until you click Open Form → **Read** (persists in `chrome.storage.local`). **Submitted** is reserved for a future Sheet match and is not set in this MVP.
 
-No Neon/Vercel/Submitted tracking.
+No Neon/Vercel backend required.
 
 Stable unpacked extension ID (public `key` in `manifest.json`):
 
@@ -57,7 +58,7 @@ You can delete or ignore the old Web client that produced `client_secret_*.json`
 ## Fix B: Keep the Web client (your current ID)
 
 Use this if you keep  
-`860318366086-o9dfo14prko87bgetr3t5r210f0djpjv.apps.googleusercontent.com`.
+`860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho.apps.googleusercontent.com`.
 
 1. Open that OAuth client in GCP (type should show **Web application**)
 2. **Authorized redirect URIs** → add **exactly**:

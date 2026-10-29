@@ -1,3 +1,5 @@
+import { getStatuses, setStatus, STATUS } from "./lib/status.js";
+
 const $ = (id) => document.getElementById(id);
 
 const btnAuth = $("btn-auth");
@@ -7,7 +9,10 @@ const statusEl = $("status");
 const listEl = $("list");
 const metaEl = $("meta");
 
-function setStatus(text, isError = false) {
+/** @type {Array<object>} */
+let currentEmails = [];
+
+function setStatusMsg(text, isError = false) {
   statusEl.textContent = text || "";
   statusEl.classList.toggle("error", Boolean(isError));
 }
@@ -37,9 +42,20 @@ function formatWhen(iso) {
   }
 }
 
-function renderEmails(emails) {
+function chipClass(status) {
+  if (status === STATUS.Read) return "chip chip-read";
+  if (status === STATUS.Submitted) return "chip chip-submitted";
+  return "chip chip-unread";
+}
+
+/**
+ * @param {Array<object>} emails
+ * @param {Record<string, string>} statusById
+ */
+function renderEmails(emails, statusById) {
+  currentEmails = emails || [];
   listEl.innerHTML = "";
-  if (!emails?.length) {
+  if (!currentEmails.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.textContent =
@@ -48,14 +64,30 @@ function renderEmails(emails) {
     return;
   }
 
-  for (const entry of emails) {
+  for (const entry of currentEmails) {
+    const status = statusById[entry.id] || STATUS.Unread;
     const li = document.createElement("li");
     li.className = "card";
+
+    const top = document.createElement("div");
+    top.className = "card-top";
+
+    const chip = document.createElement("span");
+    chip.className = chipClass(status);
+    chip.textContent = status;
+    chip.title =
+      status === STATUS.Unread
+        ? "Not opened yet"
+        : status === STATUS.Read
+          ? "Open Form was clicked"
+          : "Marked submitted (Sheet match — coming later)";
+    top.appendChild(chip);
 
     const subject = document.createElement("p");
     subject.className = "subject";
     subject.textContent = entry.subject;
-    li.appendChild(subject);
+    top.appendChild(subject);
+    li.appendChild(top);
 
     const meta = document.createElement("p");
     meta.className = "meta-row";
@@ -87,6 +119,12 @@ function renderEmails(emails) {
       form.href = entry.formUrl;
       form.target = "_blank";
       form.rel = "noopener noreferrer";
+      form.addEventListener("click", async () => {
+        // Local Unread → Read on Open Form (does not mark Submitted).
+        await setStatus(entry.id, STATUS.Read);
+        const statuses = await getStatuses(currentEmails.map((e) => e.id));
+        renderEmails(currentEmails, statuses);
+      });
     } else {
       form.className = "disabled";
       form.href = "#";
@@ -97,6 +135,16 @@ function renderEmails(emails) {
     li.appendChild(actions);
     listEl.appendChild(li);
   }
+}
+
+async function paintEmails(emails) {
+  const statuses = await getStatuses((emails || []).map((e) => e.id));
+  renderEmails(emails || [], statuses);
+  const counts = { Unread: 0, Read: 0, Submitted: 0 };
+  for (const id of Object.keys(statuses)) {
+    counts[statuses[id]] = (counts[statuses[id]] || 0) + 1;
+  }
+  metaEl.textContent = `${(emails || []).length} emails · ${counts.Unread} unread · ${counts.Read} read`;
 }
 
 function setConnectedUi(connected) {
@@ -112,25 +160,23 @@ async function loadFromCache() {
   const data = await chrome.storage.session.get(["connected", "cache"]);
   setConnectedUi(Boolean(data.connected));
   if (data.cache?.emails) {
-    renderEmails(data.cache.emails);
-    metaEl.textContent = `${data.cache.emails.length} emails`;
+    await paintEmails(data.cache.emails);
   }
 }
 
 async function refresh() {
-  setStatus("Loading surveys…");
+  setStatusMsg("Loading surveys…");
   btnRefresh.disabled = true;
   btnAuth.disabled = true;
   try {
     const res = await send("FETCH_SURVEYS");
     if (!res.ok) {
-      setStatus(res.error || "Failed to load", true);
+      setStatusMsg(res.error || "Failed to load", true);
       return;
     }
     setConnectedUi(true);
-    renderEmails(res.emails);
-    metaEl.textContent = `${res.emails.length} emails`;
-    setStatus("Up to date");
+    await paintEmails(res.emails);
+    setStatusMsg("Up to date");
   } finally {
     btnRefresh.disabled = false;
     btnAuth.disabled = false;
@@ -138,14 +184,12 @@ async function refresh() {
 }
 
 btnAuth.addEventListener("click", async () => {
-  setStatus("Connecting to Google…");
+  setStatusMsg("Connecting to Google…");
   btnAuth.disabled = true;
   try {
     const res = await send("CONNECT");
     if (!res.ok) {
-      const err = res.error || "Connect failed";
-      // Surface bad-client guidance without burying it.
-      setStatus(err, true);
+      setStatusMsg(res.error || "Connect failed", true);
       return;
     }
     setConnectedUi(true);
@@ -164,11 +208,11 @@ btnDisconnect.addEventListener("click", async () => {
   setConnectedUi(false);
   listEl.innerHTML = "";
   metaEl.textContent = "";
-  setStatus("Disconnected");
+  currentEmails = [];
+  setStatusMsg("Disconnected");
 });
 
 loadFromCache().then(() => {
-  // Auto-refresh if already connected this session.
   chrome.storage.session.get("connected").then((data) => {
     if (data.connected) refresh();
   });
