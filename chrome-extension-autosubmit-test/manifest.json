@@ -43,7 +43,7 @@
     "https://forms.gle/*"
   ],
   "oauth2": {
-    "client_id": "860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho.apps.googleusercontent.com",
+    "client_id": "860318366086-deqgmkbfdeglroq70ehchcqcflpcrude.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/gmail.readonly"
     ]

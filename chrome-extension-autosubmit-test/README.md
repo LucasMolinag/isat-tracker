@@ -40,7 +40,7 @@ This TEST build has **no** `key` → Chrome assigns a **new ID every load-unpack
 Connect runs `acquireAccessToken()` in `lib/auth.js`:
 
 1. **First:** `chrome.identity.getAuthToken` — only works with an OAuth client of type **Chrome Extension** whose **Item ID** equals **this** test extension’s ID.
-2. **Fallback (what you hit with the shared Web `client_id`):** on “bad client id” / OAuth2 request failed, it uses `chrome.identity.launchWebAuthFlow` against the **Web application** client in `manifest.json` (`860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho…`). That flow redirects to:
+2. **Fallback (Web / launchWebAuthFlow):** on “bad client id” / OAuth2 request failed, it uses `chrome.identity.launchWebAuthFlow` against the TEST `oauth2.client_id` in `manifest.json` (`860318366086-deqgmkbfdeglroq70ehchcqcflpcrude…`). That flow redirects to:
 
    ```text
    https://<THIS_TEST_EXTENSION_ID>.chromiumapp.org/
@@ -59,25 +59,21 @@ Do this when Connect opens a Google sign-in window and Google shows **redirect_u
 1. Open `chrome://extensions`
 2. Find **ISAT Tracker (AUTO-SUBMIT TEST)** (not the main ISAT Tracker)
 3. Copy the **ID** under the card (long hex string). Call it `EXTENSION_ID`.
-4. Open [Google Cloud Console](https://console.cloud.google.com/) → the project that owns client  
-   `860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho.apps.googleusercontent.com`
-5. **APIs & Services → Credentials** → open that OAuth client (type should be **Web application**)
-6. Under **Authorized redirect URIs** → **Add URI** → paste **exactly** (trailing slash required):
+4. Open [Google Cloud Console](https://console.cloud.google.com/) → the project that owns  
+   `860318366086-deqgmkbfdeglroq70ehchcqcflpcrude.apps.googleusercontent.com`
+5. **APIs & Services → Credentials** → open **that** OAuth client
+6. Match the client type to how you configured it:
+   - **Web application** → under **Authorized redirect URIs** → **Add URI** → paste **exactly** (trailing `/` required):
 
-   ```text
-   https://EXTENSION_ID.chromiumapp.org/
-   ```
+     ```text
+     https://EXTENSION_ID.chromiumapp.org/
+     ```
 
-   Example shape (your ID will differ):
-
-   ```text
-   https://abcdefghijklmnopqrstuvwxyzabcdef.chromiumapp.org/
-   ```
-
+   - **Chrome Extension** → set **Item ID** to the same `EXTENSION_ID` (the loaded AUTO-SUBMIT TEST card — not main `fldldeff…`)
 7. **Save**
 8. Back in Chrome: on the TEST extension card click **Reload**, then Connect again
 
-If you remove and re-load unpacked the TEST folder, the ID can change — add the new URI (or keep the old ones listed).
+The Item ID / `https://<TEST_ID>.chromiumapp.org/` must match the **currently loaded** AUTO-SUBMIT TEST extension. If you remove and re-load unpacked, the ID can change — update GCP to match.
 
 Enable **Gmail API** on the same GCP project if it is not already.
 
