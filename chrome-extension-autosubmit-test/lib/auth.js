@@ -108,8 +108,10 @@ export async function authViaWebFlow() {
   }
   if (!accessToken) {
     throw new Error(
-      "No access_token in redirect. Add this Authorized redirect URI on the Web OAuth client: " +
-        redirectUri,
+      "No access_token in redirect (often Error 400 redirect_uri_mismatch). " +
+        "On the Web OAuth client add Authorized redirect URI exactly: " +
+        redirectUri +
+        " — this TEST build has no fixed key; do not reuse the main fldldeff… URI. See README.",
     );
   }
 
@@ -179,15 +181,18 @@ export function formatBadClientHelp(getAuthMsg, webMsg) {
   const extId = getExtId();
   const redirect = `https://${extId}.chromiumapp.org/`;
   return [
-    "OAuth failed (bad client id usually means this client is Web, not Chrome Extension).",
-    "If you downloaded client_secret_*.json → it is a Web client.",
-    "Fix A: recreate OAuth client as type Chrome Extension, Item ID " +
+    "OAuth failed.",
+    "This AUTO-SUBMIT TEST build has no fixed key — ID is " +
       extId +
-      " (this TEST build has no fixed key — use chrome://extensions ID), put new client_id in manifest, reload.",
-    "Fix B: keep Web client — add Authorized redirect URI " +
+      " (not the main fldldeff… ID).",
+    "Auth tries getAuthToken first, then launchWebAuthFlow (Web client).",
+    "Error 400 redirect_uri_mismatch → on the Web OAuth client add Authorized redirect URI exactly: " +
       redirect +
-      " then Connect again (web auth flow).",
-    "Do not put client_secret in the extension.",
+      " then Reload the TEST extension and Connect again.",
+    "Or create a Chrome Extension OAuth client with Item ID " +
+      extId +
+      ", put that client_id in this test manifest, reload.",
+    "Do not put client_secret in the extension. See chrome-extension-autosubmit-test/README.md.",
     getAuthMsg ? `getAuthToken: ${getAuthMsg}` : "",
     webMsg ? `webFlow: ${webMsg}` : "",
   ]

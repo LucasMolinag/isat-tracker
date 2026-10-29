@@ -31,16 +31,72 @@ Manual **Done** checkbox and **Show done** behave like the main extension.
 3. Confirm the card title is **ISAT Tracker (AUTO-SUBMIT TEST)**  
 4. You can keep the main **ISAT Tracker** loaded at the same time (different ID)
 
-### OAuth note
+### Which auth path this TEST build uses
 
-This build has **no** fixed public `key`, so its extension ID is not `fldldeffedenajeiaeodlhajihlligda`.
+Main `chrome-extension/` has a fixed public `key` → stable ID `fldldeffedenajeiaeodlhajihlligda`.
 
-- Prefer **Fix B** (Web OAuth client + `launchWebAuthFlow`): add  
-  `https://<this-extension-id>.chromiumapp.org/`  
-  as an Authorized redirect URI (copy ID from `chrome://extensions`).
-- Or create a separate Chrome Extension OAuth client whose Item ID matches **this** test extension’s ID.
+This TEST build has **no** `key` → Chrome assigns a **new ID every load-unpacked install** (or after remove + reload). That ID is **not** `fldldeff…`.
 
-Same `oauth2.client_id` as the main extension is fine for the Web-client path. Never put `client_secret` in the extension.
+Connect runs `acquireAccessToken()` in `lib/auth.js`:
+
+1. **First:** `chrome.identity.getAuthToken` — only works with an OAuth client of type **Chrome Extension** whose **Item ID** equals **this** test extension’s ID.
+2. **Fallback (what you hit with the shared Web `client_id`):** on “bad client id” / OAuth2 request failed, it uses `chrome.identity.launchWebAuthFlow` against the **Web application** client in `manifest.json` (`860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho…`). That flow redirects to:
+
+   ```text
+   https://<THIS_TEST_EXTENSION_ID>.chromiumapp.org/
+   ```
+
+So with the current shared Web client id, the effective path is **Web client + launchWebAuthFlow**. `Error 400: redirect_uri_mismatch` means that exact URI is missing on the Web client (the main extension’s `https://fldldeffedenajeiaeodlhajihlligda.chromiumapp.org/` does **not** cover this test build).
+
+Never put `client_secret` in the extension.
+
+---
+
+### Fix: `Error 400: redirect_uri_mismatch` (Web client / launchWebAuthFlow)
+
+Do this when Connect opens a Google sign-in window and Google shows **redirect_uri_mismatch** (the usual case for this TEST build).
+
+1. Open `chrome://extensions`
+2. Find **ISAT Tracker (AUTO-SUBMIT TEST)** (not the main ISAT Tracker)
+3. Copy the **ID** under the card (long hex string). Call it `EXTENSION_ID`.
+4. Open [Google Cloud Console](https://console.cloud.google.com/) → the project that owns client  
+   `860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho.apps.googleusercontent.com`
+5. **APIs & Services → Credentials** → open that OAuth client (type should be **Web application**)
+6. Under **Authorized redirect URIs** → **Add URI** → paste **exactly** (trailing slash required):
+
+   ```text
+   https://EXTENSION_ID.chromiumapp.org/
+   ```
+
+   Example shape (your ID will differ):
+
+   ```text
+   https://abcdefghijklmnopqrstuvwxyzabcdef.chromiumapp.org/
+   ```
+
+7. **Save**
+8. Back in Chrome: on the TEST extension card click **Reload**, then Connect again
+
+If you remove and re-load unpacked the TEST folder, the ID can change — add the new URI (or keep the old ones listed).
+
+Enable **Gmail API** on the same GCP project if it is not already.
+
+---
+
+### Alternative: Chrome Extension OAuth client (getAuthToken path)
+
+Only if you want `getAuthToken` to succeed without the web-flow fallback:
+
+1. `chrome://extensions` → copy the **ISAT Tracker (AUTO-SUBMIT TEST)** ID (`EXTENSION_ID`)
+2. GCP → **Credentials → + Create credentials → OAuth client ID**
+3. Application type: **Chrome Extension** (not Web application)
+4. **Item ID:** paste `EXTENSION_ID` (the unloaded/loaded test extension’s ID — **not** the main `fldldeff…` ID)
+5. Create → copy the new **Client ID** only (there is no secret)
+6. Put that Client ID in `chrome-extension-autosubmit-test/manifest.json` → `oauth2.client_id`
+7. Consent screen: scope `https://www.googleapis.com/auth/gmail.readonly`
+8. Reload the TEST extension → Connect
+
+If you later remove + re-load unpacked and the ID changes, update the Chrome Extension client’s Item ID (or recreate the client) to match.
 
 ---
 
