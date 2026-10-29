@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ISAT Tracker",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "List Jira survey emails and open the prefilled Google Form or Jira ticket.",
   "action": {
     "default_popup": "popup.html",
@@ -24,7 +24,8 @@
   },
   "permissions": [
     "identity",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "https://gmail.googleapis.com/*",

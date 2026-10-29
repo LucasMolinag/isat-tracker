@@ -43,12 +43,13 @@ export async function getStatus(messageId) {
  * @param {"Unread"|"Read"|"Submitted"} toStatus
  */
 export async function setStatus(messageId, toStatus) {
-  if (!messageId || !RANK.hasOwnProperty(toStatus)) return STATUS.Unread;
+  if (!messageId || !(toStatus in RANK)) return STATUS.Unread;
   const map = await readMap();
   const current = map[messageId] || STATUS.Unread;
   if (RANK[toStatus] <= RANK[current]) return current;
   map[messageId] = toStatus;
-  await writeMap(map);
+  // Await the write so callers can finish before the popup unloads.
+  await chrome.storage.local.set({ [STORAGE_KEY]: map });
   return toStatus;
 }
 

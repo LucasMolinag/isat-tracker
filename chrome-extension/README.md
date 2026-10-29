@@ -83,6 +83,27 @@ Still **never** commit or paste `client_secret` into the extension.
 3. ID must be `fldldeffedenajeiaeodlhajihlligda`  
 4. Apply Fix A or Fix B → Reload → Connect  
 
+## Package `chrome-extension-only.zip`
+
+From the **repo root** (so the zip contains `manifest.json` at the top level when extracted… or pack the folder itself):
+
+```bash
+# From repo root — zip the chrome-extension folder contents for Load unpacked / sharing
+cd chrome-extension
+zip -r ../chrome-extension-only.zip . \
+  -x '*.DS_Store' -x '*~' -x '*.map'
+cd ..
+```
+
+Then either:
+
+- **Load unpacked** from the `chrome-extension/` folder (preferred while developing), or  
+- Unzip `chrome-extension-only.zip` to a folder and Load unpacked that folder.
+
+Do **not** put `client_secret` or `.env` files in the zip. The public `key` + `oauth2.client_id` in `manifest.json` are fine.
+
+Rebuild the zip whenever you change extension files before sharing a new build.
+
 ## What it queries
 
 ```
@@ -95,7 +116,9 @@ Scope: `gmail.readonly` only (no Drive).
 
 1. **Connect Google**  
 2. **Refresh**  
-3. **Open Ticket** / **Open Form** (new tabs)
+3. Status starts **Unread**; **Open Form** awaits a local storage write to **Read**, then opens the form in a new tab (so the popup unload cannot abort the write)  
+4. **Open Ticket** does not change status  
+5. Keys are stable Gmail `messages.id` values in `chrome.storage.local.messageStatus`  
 
 ## Layout
 
@@ -104,6 +127,7 @@ chrome-extension/
   manifest.json       # client_id + public key (stable ID)
   background.js
   lib/auth.js         # getAuthToken + launchWebAuthFlow fallback
+  lib/status.js       # local Unread / Read / Submitted map
   lib/gmail.js | forms.js | jira.js
   popup.*
   README.md

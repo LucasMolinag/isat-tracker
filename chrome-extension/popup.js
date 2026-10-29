@@ -116,14 +116,31 @@ function renderEmails(emails, statusById) {
     const form = document.createElement("a");
     form.textContent = "Open Form";
     if (entry.formUrl) {
+      // Use button-like link: do NOT use target=_blank directly — the popup
+      // closes as soon as a new tab opens, aborting async setStatus.
       form.href = entry.formUrl;
-      form.target = "_blank";
       form.rel = "noopener noreferrer";
-      form.addEventListener("click", async () => {
-        // Local Unread → Read on Open Form (does not mark Submitted).
-        await setStatus(entry.id, STATUS.Read);
-        const statuses = await getStatuses(currentEmails.map((e) => e.id));
-        renderEmails(currentEmails, statuses);
+      form.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const messageId = entry.id;
+        const formUrl = entry.formUrl;
+        if (!messageId || !formUrl) return;
+
+        // Persist Read BEFORE opening a tab (popup may unload right after).
+        await setStatus(messageId, STATUS.Read);
+
+        try {
+          await chrome.tabs.create({ url: formUrl, active: true });
+        } catch {
+          // Fallback if tabs API unavailable
+          window.open(formUrl, "_blank", "noopener,noreferrer");
+        }
+
+        // Re-render if popup is still open.
+        if (document.body) {
+          await paintEmails(currentEmails);
+        }
       });
     } else {
       form.className = "disabled";
