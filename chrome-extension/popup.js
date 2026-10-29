@@ -62,8 +62,9 @@ function chipClass(status) {
 /**
  * @param {Array<object>} emails
  * @param {Record<string, string>} statusById
+ * @param {boolean} includeDone
  */
-function renderEmails(emails, statusById) {
+function renderEmails(emails, statusById, includeDone) {
   currentEmails = emails || [];
   listEl.innerHTML = "";
   if (!currentEmails.length) {
@@ -75,7 +76,22 @@ function renderEmails(emails, statusById) {
     return;
   }
 
-  for (const entry of currentEmails) {
+  const visible = currentEmails.filter((entry) => {
+    const status = statusById[entry.id] || STATUS.Unread;
+    return includeDone || status !== STATUS.Submitted;
+  });
+
+  if (!visible.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = includeDone
+      ? "No matching Jira survey emails."
+      : "All caught up — enable “Show done” to see Submitted items.";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  for (const entry of visible) {
     const status = statusById[entry.id] || STATUS.Unread;
     const li = document.createElement("li");
     li.className = "card";
@@ -183,19 +199,26 @@ function renderEmails(emails, statusById) {
 }
 
 async function paintEmails(emails) {
-  const statuses = await getStatuses((emails || []).map((e) => e.id));
-  renderEmails(emails || [], statuses);
+  const list = emails || [];
+  const statuses = await getStatuses(list.map((e) => e.id));
+  renderEmails(list, statuses, showDone);
   const counts = { Unread: 0, Read: 0, Submitted: 0 };
-  for (const id of Object.keys(statuses)) {
-    counts[statuses[id]] = (counts[statuses[id]] || 0) + 1;
+  for (const entry of list) {
+    const s = statuses[entry.id] || STATUS.Unread;
+    counts[s] = (counts[s] || 0) + 1;
   }
-  metaEl.textContent = `${(emails || []).length} emails · ${counts.Unread} unread · ${counts.Read} read · ${counts.Submitted} done`;
+  const hiddenDone = showDone ? 0 : counts.Submitted;
+  const shown = list.length - hiddenDone;
+  metaEl.textContent = showDone
+    ? `${list.length} emails · ${counts.Unread} unread · ${counts.Read} read · ${counts.Submitted} done`
+    : `${shown} shown · ${counts.Submitted} done hidden`;
 }
 
 function setConnectedUi(connected) {
   btnAuth.hidden = connected;
   btnRefresh.hidden = !connected;
   btnDisconnect.hidden = !connected;
+  filterBar.hidden = !connected;
   if (!connected) {
     btnAuth.textContent = "Connect Google";
   }
@@ -257,8 +280,21 @@ btnDisconnect.addEventListener("click", async () => {
   setStatusMsg("Disconnected");
 });
 
-loadFromCache().then(() => {
-  chrome.storage.session.get("connected").then((data) => {
-    if (data.connected) refresh();
-  });
+chkShowDone.addEventListener("change", async () => {
+  showDone = chkShowDone.checked;
+  await setShowDone(showDone);
+  await paintEmails(currentEmails);
 });
+
+async function initFilter() {
+  showDone = await getShowDone();
+  chkShowDone.checked = showDone;
+}
+
+initFilter()
+  .then(() => loadFromCache())
+  .then(() => {
+    chrome.storage.session.get("connected").then((data) => {
+      if (data.connected) refresh();
+    });
+  });
