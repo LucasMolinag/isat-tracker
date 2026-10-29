@@ -8,7 +8,8 @@ export const dynamic = "force-dynamic";
 /**
  * GET /r/{trackingId}
  * Marks the entry Read (never downgrades Submitted), then redirects to the
- * Google Form with the tracking token prefilled into entry.<fieldId>.
+ * Google Form URL extracted from that email (preferred). Prefills trackingId
+ * into FormConfig.entryFieldId when configured.
  */
 export async function GET(
   _request: Request,
@@ -31,11 +32,12 @@ export async function GET(
   // Idempotent: Submitted wins if already submitted.
   await transitionEntryStatus(entry.id, "Read", "open tracked form link");
 
-  if (!entry.formConfig) {
+  const formUrl = entry.formUrl ?? entry.formConfig?.formUrl ?? null;
+  if (!formUrl) {
     return NextResponse.json(
       {
         error:
-          "No form configured for this entry. Set FormConfig in Settings, then re-sync.",
+          "No Google Form URL on this email (and no FormConfig fallback). Re-sync after the message includes a forms link.",
         trackingId,
         status: entry.status,
       },
@@ -44,8 +46,8 @@ export async function GET(
   }
 
   const target = buildTrackedFormUrl(
-    entry.formConfig.formUrl,
-    entry.formConfig.entryFieldId,
+    formUrl,
+    entry.formConfig?.entryFieldId,
     entry.trackingId,
   );
 

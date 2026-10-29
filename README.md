@@ -125,12 +125,12 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" \
 
 Both:
 
-1. Build Gmail `q` from enabled subject rules.
-2. Upsert `EmailEntry` (**Unread** for new; never downgrade status).
+1. Build Gmail `q` from enabled subject rules (optional per-rule `fromAddress`), e.g. `from:jira@glia.atlassian.net (subject:"How was the collab on" OR subject:"How is the information provided on")`.
+2. Upsert `EmailEntry` (**Unread** for new; never downgrade status). On sync, parse the message body for a `docs.google.com/forms` / `forms.gle` link and store it on `EmailEntry.formUrl`.
 3. Match Sheet/Forms tokens → **Submitted**.
 4. Update `User.lastSyncAt` / `lastSyncError` from the Gmail step.
 
-`/r/{trackingId}`: mark **Read** → redirect with form prefill.
+`/r/{trackingId}`: mark **Read** → redirect to **that email’s** extracted form URL (FormConfig URL is fallback only), prefilling `entryFieldId` when set.
 
 ## What’s implemented vs remaining
 

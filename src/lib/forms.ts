@@ -30,26 +30,82 @@ export type MatchResult = {
   details?: string[];
 };
 
+const GOOGLE_FORM_URL_RE =
+  /https?:\/\/(?:docs\.google\.com\/forms|forms\.gle)\/[^\s"'<>\\]+/gi;
+
+/** Strip trailing punctuation commonly glued to URLs in email prose. */
+function cleanExtractedUrl(raw: string): string {
+  let url = raw.trim();
+  url = url.replace(/&amp;/gi, "&");
+  url = url.replace(/[),.;\]]+$/g, "");
+  // Prefer viewform over formResponse endpoints when both appear as prefixes.
+  return url;
+}
+
+/**
+ * Extract the first Google Forms / forms.gle URL from plain or HTML email body.
+ */
+export function extractGoogleFormUrl(body: string): string | null {
+  if (!body) return null;
+  const matches = body.match(GOOGLE_FORM_URL_RE);
+  if (!matches?.length) return null;
+
+  const cleaned = matches.map(cleanExtractedUrl);
+  // Prefer explicit forms.google / viewform links over shortened forms.gle when both exist.
+  const preferred =
+    cleaned.find((u) => /docs\.google\.com\/forms/i.test(u)) ?? cleaned[0]!;
+  try {
+    // Validate
+    new URL(preferred);
+    return preferred;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build a Google Form prefill URL with the tracking token in entry.<fieldId>.
+ * If entryFieldId is missing/placeholder, returns the form URL unchanged.
  */
 export function buildTrackedFormUrl(
   formUrl: string,
-  entryFieldId: string,
+  entryFieldId: string | null | undefined,
   trackingId: string,
 ): string {
   const base = formUrl.split("?")[0] ?? formUrl;
-  const viewUrl = base.includes("/viewform")
+  let viewUrl = base.includes("/viewform")
     ? base
     : base.replace(/\/edit$/, "/viewform");
+
+  // forms.gle short links: leave as-is (can't append entry. without resolving).
+  if (/forms\.gle\//i.test(formUrl) && !entryFieldId) {
+    return formUrl;
+  }
+
+  if (!entryFieldId || entryFieldId === "NEEDS_ENTRY_FIELD_ID") {
+    return formUrl;
+  }
+
+  if (!viewUrl.includes("/viewform") && /docs\.google\.com\/forms/i.test(viewUrl)) {
+    // Keep original if we can't normalize; still try query append on original.
+    viewUrl = formUrl.split("?")[0] ?? formUrl;
+  }
 
   const field = entryFieldId.startsWith("entry.")
     ? entryFieldId
     : `entry.${entryFieldId}`;
 
-  const url = new URL(viewUrl);
-  url.searchParams.set(field, trackingId);
-  return url.toString();
+  try {
+    // Preserve existing prefill params from the email (ticket id, assignee, …)
+    // and append/overwrite only the tracking field.
+    const url = new URL(
+      /docs\.google\.com\/forms/i.test(formUrl) ? formUrl : viewUrl,
+    );
+    url.searchParams.set(field, trackingId);
+    return url.toString();
+  } catch {
+    return formUrl;
+  }
 }
 
 /** Accept spreadsheet id or full Sheets URL. */

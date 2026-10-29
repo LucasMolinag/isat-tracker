@@ -1,7 +1,7 @@
 /**
  * Live Gmail subject-rule sync.
  *
- * 1. Load enabled SubjectRule rows → Gmail `q`
+ * 1. Load enabled SubjectRule rows → Gmail `q` (optional from: + subject OR)
  * 2. List + get messages via Gmail API (readonly)
  * 3. Upsert EmailEntry by gmailMessageId; new rows start Unread
  * 4. Update User.lastSyncAt / lastSyncError
@@ -10,6 +10,7 @@
 import type { EntryStatus, SubjectRule } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { GoogleAuthError, googleJson, hasScope } from "@/lib/google-auth";
+import { extractGoogleFormUrl } from "@/lib/forms";
 
 const GMAIL_READONLY =
   "https://www.googleapis.com/auth/gmail.readonly";
@@ -24,20 +25,53 @@ export type SyncResult = {
   query?: string;
 };
 
-/** Build a Gmail `q` string from subject rules. */
+function subjectClause(
+  pattern: string,
+  matchMode: SubjectRule["matchMode"],
+): string {
+  const p = pattern.replace(/"/g, "").trim();
+  // Quote phrases so multi-word "contains" stays a subject phrase match.
+  if (matchMode === "Exact" || /\s/.test(p)) {
+    return `subject:"${p}"`;
+  }
+  return `subject:${p}`;
+}
+
+/**
+ * Build a Gmail `q` string from subject rules.
+ *
+ * Examples:
+ * - from + two subjects →
+ *   `from:jira@glia.atlassian.net (subject:"How was the collab on" OR subject:"How is the information provided on")`
+ * - Mixed from addresses → OR of `(from:… subject:…)` groups
+ */
 export function buildSubjectQuery(rules: SubjectRule[]): string {
   const enabled = rules.filter((r) => r.enabled && r.pattern.trim());
   if (enabled.length === 0) return "";
 
-  const parts = enabled.map((r) => {
-    const p = r.pattern.replace(/"/g, "");
-    if (r.matchMode === "Exact") {
-      return `subject:"${p}"`;
-    }
-    return `subject:${p}`;
-  });
+  const byFrom = new Map<string, SubjectRule[]>();
+  for (const rule of enabled) {
+    const key = (rule.fromAddress ?? "").trim().toLowerCase();
+    const list = byFrom.get(key) ?? [];
+    list.push(rule);
+    byFrom.set(key, list);
+  }
 
-  return parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
+  const groups: string[] = [];
+  for (const [fromKey, groupRules] of byFrom) {
+    const subjects = groupRules.map((r) =>
+      subjectClause(r.pattern, r.matchMode),
+    );
+    const subjectPart =
+      subjects.length === 1 ? subjects[0]! : `(${subjects.join(" OR ")})`;
+    if (fromKey) {
+      groups.push(`from:${fromKey} ${subjectPart}`);
+    } else {
+      groups.push(subjectPart);
+    }
+  }
+
+  return groups.length === 1 ? groups[0]! : `(${groups.join(" OR ")})`;
 }
 
 type GmailListResponse = {
@@ -46,12 +80,17 @@ type GmailListResponse = {
   resultSizeEstimate?: number;
 };
 
+type GmailPayloadPart = {
+  mimeType?: string;
+  body?: { data?: string; size?: number };
+  parts?: GmailPayloadPart[];
+  headers?: Array<{ name: string; value: string }>;
+};
+
 type GmailMessage = {
   id: string;
   internalDate?: string;
-  payload?: {
-    headers?: Array<{ name: string; value: string }>;
-  };
+  payload?: GmailPayloadPart;
 };
 
 function headerValue(
@@ -100,17 +139,46 @@ async function listAllMessageIds(
   return ids;
 }
 
-async function getMessageMeta(
+function decodeBase64Url(data: string): string {
+  const padded = data.replace(/-/g, "+").replace(/_/g, "/");
+  return Buffer.from(padded, "base64").toString("utf8");
+}
+
+/** Collect text/plain + text/html bodies from a Gmail message payload tree. */
+function collectBodyText(payload: GmailPayloadPart | undefined): string {
+  if (!payload) return "";
+  const chunks: string[] = [];
+
+  function walk(part: GmailPayloadPart) {
+    const mime = (part.mimeType || "").toLowerCase();
+    if (
+      (mime === "text/plain" || mime === "text/html" || mime === "") &&
+      part.body?.data
+    ) {
+      try {
+        chunks.push(decodeBase64Url(part.body.data));
+      } catch {
+        // ignore decode errors
+      }
+    }
+    for (const child of part.parts ?? []) walk(child);
+  }
+
+  walk(payload);
+  return chunks.join("\n");
+}
+
+async function getMessageDetails(
   userId: string,
   messageId: string,
 ): Promise<{
   subject: string;
   fromAddress: string;
   receivedAt: Date;
+  formUrl: string | null;
 }> {
-  const url =
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}` +
-    `?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
+  // Full payload so we can parse the body for a per-email Google Form link.
+  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`;
 
   const msg = await googleJson<GmailMessage>(userId, url);
 
@@ -121,8 +189,10 @@ async function getMessageMeta(
   const receivedAt = Number.isFinite(internalMs)
     ? new Date(internalMs)
     : new Date(headerValue(headers, "Date") || Date.now());
+  const body = collectBodyText(msg.payload);
+  const formUrl = extractGoogleFormUrl(body);
 
-  return { subject, fromAddress, receivedAt };
+  return { subject, fromAddress, receivedAt, formUrl };
 }
 
 /**
@@ -151,7 +221,6 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
   }
 
   try {
-    // Warm / validate tokens + optional scope hint
     const { getGoogleAccessToken } = await import("@/lib/google-auth");
     const access = await getGoogleAccessToken(userId);
     if (!hasScope(access.scope, GMAIL_READONLY)) {
@@ -178,18 +247,26 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
       });
 
       if (existing) {
-        // Keep status; optionally attach default form config if missing.
-        if (formConfig && !existing.formConfigId) {
+        // Backfill formUrl / formConfigId when missing.
+        if (!existing.formUrl || (formConfig && !existing.formConfigId)) {
+          const details = !existing.formUrl
+            ? await getMessageDetails(userId, gmailMessageId)
+            : null;
           await prisma.emailEntry.update({
             where: { id: existing.id },
-            data: { formConfigId: formConfig.id },
+            data: {
+              ...(details?.formUrl ? { formUrl: details.formUrl } : {}),
+              ...(formConfig && !existing.formConfigId
+                ? { formConfigId: formConfig.id }
+                : {}),
+            },
           });
         }
         upserted += 1;
         continue;
       }
 
-      const meta = await getMessageMeta(userId, gmailMessageId);
+      const meta = await getMessageDetails(userId, gmailMessageId);
       await prisma.emailEntry.create({
         data: {
           userId,
@@ -197,6 +274,7 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
           subject: meta.subject,
           fromAddress: meta.fromAddress,
           receivedAt: meta.receivedAt,
+          formUrl: meta.formUrl,
           status: "Unread",
           formConfigId: formConfig?.id,
         },
