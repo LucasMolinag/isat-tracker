@@ -19,6 +19,7 @@ export default async function SettingsPage() {
     id: string;
     pattern: string;
     matchMode: "Exact" | "Contains";
+    fromAddress: string | null;
     enabled: boolean;
   }> = [];
   let forms: Array<{
@@ -52,11 +53,13 @@ export default async function SettingsPage() {
     "use server";
     const uid = await requireUserId();
     const pattern = String(formData.get("pattern") ?? "").trim();
+    const fromAddress =
+      String(formData.get("fromAddress") ?? "").trim() || null;
     const matchMode =
       formData.get("matchMode") === "Exact" ? "Exact" : "Contains";
     if (!pattern) return;
     await prisma.subjectRule.create({
-      data: { userId: uid, pattern, matchMode, enabled: true },
+      data: { userId: uid, pattern, matchMode, fromAddress, enabled: true },
     });
     revalidatePath("/settings");
   }
@@ -112,7 +115,8 @@ export default async function SettingsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-stone-600">
-          Subject patterns, form URL + tracking field id, and sync.
+          Subject + optional From filters, form URL + tracking field id, and
+          sync.
         </p>
         {dbError && (
           <p className="mt-2 text-sm text-red-700">{dbError}</p>
@@ -122,9 +126,11 @@ export default async function SettingsPage() {
       <section className="space-y-4">
         <h2 className="text-lg font-medium">Subject rules</h2>
         <p className="text-sm text-stone-600">
-          Gmail sync uses these patterns in a{" "}
-          <code className="rounded bg-stone-100 px-1 text-xs">subject:</code>{" "}
-          query. Exact vs contains.
+          Gmail sync builds a query like{" "}
+          <code className="rounded bg-stone-100 px-1 text-xs">
+            from:addr (subject:&quot;…&quot; OR subject:&quot;…&quot;)
+          </code>
+          . Leave From empty to match any sender.
         </p>
         <ul className="divide-y divide-stone-200 rounded-md border border-stone-200 bg-white">
           {rules.length === 0 && (
@@ -139,6 +145,7 @@ export default async function SettingsPage() {
                 <span className="font-medium">{rule.pattern}</span>
                 <span className="ml-2 text-stone-500">
                   {rule.matchMode}
+                  {rule.fromAddress ? ` · from:${rule.fromAddress}` : ""}
                   {!rule.enabled && " · disabled"}
                 </span>
               </div>
@@ -170,12 +177,21 @@ export default async function SettingsPage() {
             </li>
           ))}
         </ul>
-        <form action={addSubjectRule} className="flex flex-col gap-2 sm:flex-row">
+        <form
+          action={addSubjectRule}
+          className="flex flex-col gap-2 sm:flex-row sm:flex-wrap"
+        >
           <input
             name="pattern"
             required
-            placeholder="Subject pattern"
-            className="flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm"
+            placeholder="Subject pattern (contains / exact)"
+            className="min-w-[14rem] flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm"
+          />
+          <input
+            name="fromAddress"
+            type="email"
+            placeholder="From (optional) e.g. jira@…"
+            className="min-w-[14rem] flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm"
           />
           <select
             name="matchMode"
@@ -197,10 +213,11 @@ export default async function SettingsPage() {
       <section className="space-y-4">
         <h2 className="text-lg font-medium">Form config</h2>
         <p className="text-sm text-stone-600">
-          Reserve one short-answer question for the tracking ID. Paste its
-          Google Forms <code className="rounded bg-stone-100 px-1 text-xs">entry.XXXX</code>{" "}
-          field id (or just the numeric id). Optional linked Sheet id for the
-          response matcher stub.
+          Open form uses the Google Form link parsed from each email body.
+          Settings form URL is only a fallback. Paste the tracking question’s{" "}
+          <code className="rounded bg-stone-100 px-1 text-xs">entry.XXXX</code>{" "}
+          field id for prefill, and optional response Sheet id for Submitted
+          matching.
         </p>
         <form
           action={saveFormConfig}
@@ -215,7 +232,9 @@ export default async function SettingsPage() {
             />
           </label>
           <label className="block text-sm">
-            <span className="text-stone-600">Form URL</span>
+            <span className="text-stone-600">
+              Fallback form URL (optional if emails embed the form link)
+            </span>
             <input
               name="formUrl"
               required
@@ -256,8 +275,7 @@ export default async function SettingsPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Sync</h2>
         <p className="text-sm text-stone-600">
-          Runs the Gmail upsert stub and Forms/Sheets matcher stub. Live Google
-          API calls need credentials (see README).
+          Runs Gmail upsert + Forms/Sheets matcher for your mailbox.
         </p>
         <div className="max-w-xs">
           <SyncButton />

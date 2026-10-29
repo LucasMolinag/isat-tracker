@@ -21,6 +21,7 @@ export default async function DashboardPage() {
     fromAddress: string;
     receivedAt: Date;
     trackingId: string;
+    formUrl: string | null;
     status: "Unread" | "Read" | "Submitted";
   }> = [];
   let user: { lastSyncAt: Date | null; lastSyncError: string | null } | null =
@@ -39,6 +40,7 @@ export default async function DashboardPage() {
           fromAddress: true,
           receivedAt: true,
           trackingId: true,
+          formUrl: true,
           status: true,
         },
       }),
@@ -109,6 +111,7 @@ export default async function DashboardPage() {
                 <p className="truncate text-xs text-stone-500">
                   {entry.fromAddress} ·{" "}
                   {entry.receivedAt.toISOString().slice(0, 19)}Z
+                  {entry.formUrl ? " · form linked" : " · no form URL in body"}
                 </p>
               </div>
               <a

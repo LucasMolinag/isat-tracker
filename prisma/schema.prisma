@@ -87,6 +87,8 @@ model SubjectRule {
   /// Subject pattern to match against Gmail (exact or contains).
   pattern   String
   matchMode MatchMode @default(Contains)
+  /// Optional From filter (e.g. jira@glia.atlassian.net). Combined with subject in Gmail `q`.
+  fromAddress String?
   enabled   Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -122,6 +124,8 @@ model EmailEntry {
   subject        String
   fromAddress    String
   receivedAt     DateTime
+  /// Google Form URL extracted from the message body (preferred Open form target).
+  formUrl        String?
   /// Unguessable UUID used in /r/{trackingId} and form prefill.
   trackingId     String      @unique @default(uuid())
   status         EntryStatus @default(Unread)
