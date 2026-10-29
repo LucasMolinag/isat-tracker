@@ -22,7 +22,10 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["identity", "storage"],
+  "permissions": [
+    "identity",
+    "storage"
+  ],
   "host_permissions": [
     "https://gmail.googleapis.com/*",
     "https://www.googleapis.com/*",
@@ -30,6 +33,9 @@
   ],
   "oauth2": {
     "client_id": "860318366086-o9dfo14prko87bgetr3t5r210f0djpjv.apps.googleusercontent.com",
-    "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]
-  }
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ]
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo/E32NtgNhSmzX/qxWHEsTqPC5ZvpmsZ/bVZDo/AM+Zc++BdInlz4XqyWjLKIzBnrGZvtPt4aT8q78YaazkQeIk9f8yKVY2PH4j44q3eP8GrGiZGNVtR473O9sSGiWoBYWEpsF/GjjdIhiP7rtVrZdcPllVuLyOjSHhfGQ6R7ecikgC6L5aDYjS8i4hD/bfJyhxhWhxJA7QHH3cAiYc4XrWPGakjoCyn2E4lY4HRJqQZaT6sxuJBuKoggIap8GiltXt4pK0jJTddMLo+LtA2l9jDOtJzjJvNPO1EjOOhG070h5Tr7Wpv/OxMdgSrOUi51hdMu2paDZAQmQi3HzLwvQIDAQAB"
 }
