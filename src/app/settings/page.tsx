@@ -215,10 +215,12 @@ export default async function SettingsPage() {
         <p className="text-sm text-stone-600">
           Open form uses the Google Form link from each email (full prefill,
           prefers{" "}
-          <code className="rounded bg-stone-100 px-1 text-xs">=3</code>). The
-          tracking field id is stored for Submitted matching later — open does
-          not overwrite an existing rating prefill. Submitted stays deferred
-          until Sheet responses are wired.
+          <code className="rounded bg-stone-100 px-1 text-xs">=3</code>; open
+          never overwrites that rating). Submitted is detected from the response
+          Sheet by matching ticket keys (
+          <code className="rounded bg-stone-100 px-1 text-xs">CE-XXXX</code> /
+          <code className="rounded bg-stone-100 px-1 text-xs">entry.86431035</code>
+          ) — not on Open.
         </p>
         <form
           action={saveFormConfig}
@@ -259,10 +261,12 @@ export default async function SettingsPage() {
             />
           </label>
           <label className="block text-sm">
-            <span className="text-stone-600">Response Sheet id (optional)</span>
+            <span className="text-stone-600">
+              Response Sheet id (required for Submitted detection)
+            </span>
             <input
               name="responseSheetId"
-              placeholder="Spreadsheet ID"
+              placeholder="Spreadsheet ID or Sheets URL"
               defaultValue={primaryForm?.responseSheetId ?? ""}
               className="mt-1 w-full rounded-md border border-stone-300 px-3 py-2"
             />
@@ -279,8 +283,8 @@ export default async function SettingsPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Sync</h2>
         <p className="text-sm text-stone-600">
-          Pulls matching Jira survey emails and refreshes each entry’s form
-          link.
+          Pulls matching Jira survey emails, refreshes form links, and marks
+          Submitted when the response Sheet contains the ticket key.
         </p>
         <SyncButton />
       </section>

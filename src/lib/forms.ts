@@ -6,12 +6,16 @@
 import type { FormConfig } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { transitionEntryStatus } from "@/lib/status";
+import { parseJiraTicketKey } from "@/lib/jira";
 import {
   GoogleAuthError,
   getGoogleAccessToken,
   googleJson,
   hasScope,
 } from "@/lib/google-auth";
+
+/** Ticket keys like CE-15626 (also extracted from Sheet cells / form answers). */
+const TICKET_KEY_GLOBAL_RE = /\b([A-Z][A-Z0-9]+-\d+)\b/gi;
 
 const SHEETS_READONLY =
   "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -293,7 +297,24 @@ async function fetchFormsResponseTokens(
   return tokens;
 }
 
-async function matchTokensToEntries(
+function collectTicketKeys(values: string[]): string[] {
+  const keys = new Set<string>();
+  for (const raw of values) {
+    TICKET_KEY_GLOBAL_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = TICKET_KEY_GLOBAL_RE.exec(raw))) {
+      keys.add(m[1]!.toUpperCase());
+    }
+  }
+  return [...keys];
+}
+
+/**
+ * Mark EmailEntry Submitted when Sheet/Forms response cells contain the
+ * ticket key from the email subject (entry.86431035 / CE-XXXX).
+ * Does not touch form URLs or QoS rating prefills (=3).
+ */
+async function matchTicketKeysToEntries(
   userId: string,
   foundValues: string[],
   note: string,
@@ -303,27 +324,32 @@ async function matchTokensToEntries(
       userId,
       status: { in: ["Unread", "Read"] },
     },
-    select: { id: true, trackingId: true },
+    select: { id: true, trackingId: true, subject: true },
   });
 
   if (openEntries.length === 0) return 0;
 
-  const byToken = new Map(
+  const byTicket = new Map<string, { id: string }>();
+  for (const entry of openEntries) {
+    const key = parseJiraTicketKey(entry.subject);
+    if (key) byTicket.set(key.toUpperCase(), entry);
+  }
+
+  const responseTickets = collectTicketKeys(foundValues);
+  const matchedIds = new Set<string>();
+  for (const ticket of responseTickets) {
+    const entry = byTicket.get(ticket);
+    if (entry) matchedIds.add(entry.id);
+  }
+
+  // Secondary: tracking UUID in a cell (only if ever written without overwriting =3).
+  const byTracking = new Map(
     openEntries.map((e) => [e.trackingId.toLowerCase(), e]),
   );
-
-  const matchedIds = new Set<string>();
   for (const raw of foundValues) {
-    const value = raw.trim();
-    const lower = value.toLowerCase();
-    const exact = byToken.get(lower);
-    if (exact) {
-      matchedIds.add(exact.id);
-      continue;
-    }
-    for (const [token, entry] of byToken) {
-      if (lower.includes(token)) matchedIds.add(entry.id);
-    }
+    const lower = raw.trim().toLowerCase();
+    const exact = byTracking.get(lower);
+    if (exact) matchedIds.add(exact.id);
   }
 
   let matched = 0;
@@ -338,56 +364,50 @@ async function matchOneConfig(
   userId: string,
   config: FormConfig,
   details: string[],
-): Promise<{ matched: number; scanned: number }> {
+): Promise<{ matched: number; scanned: number; usable: boolean }> {
   let tokens: string[] = [];
   let source = "";
 
   if (config.responseSheetId) {
     const sheetId = extractSpreadsheetId(config.responseSheetId);
     if (!sheetId) {
-      details.push(
-        `FormConfig ${config.id}: invalid responseSheetId (need spreadsheet id or URL)`,
-      );
-      return { matched: 0, scanned: 0 };
+      details.push("invalid responseSheetId");
+      return { matched: 0, scanned: 0, usable: false };
     }
     tokens = await fetchSheetTokens(userId, sheetId);
     source = `sheet:${sheetId}`;
   } else {
     const formId = extractFormsApiFormId(config.formUrl);
     if (!formId) {
-      details.push(
-        `FormConfig ${config.id}: set responseSheetId, or use a Forms edit URL (/forms/d/{id}/edit) — public /d/e/ ids are not Forms API formIds`,
-      );
-      return { matched: 0, scanned: 0 };
+      // Public /d/e/ viewform ids cannot drive Forms API — need Sheet id.
+      details.push("need responseSheetId (public viewform id is not a Forms API formId)");
+      return { matched: 0, scanned: 0, usable: false };
     }
     tokens = await fetchFormsResponseTokens(userId, formId);
     source = `forms:${formId}`;
   }
 
-  const matched = await matchTokensToEntries(
+  const matched = await matchTicketKeysToEntries(
     userId,
     tokens,
-    `forms matcher (${source})`,
+    `submitted matcher (${source})`,
   );
   details.push(
-    `${source}: scanned ${tokens.length} value(s), newly Submitted=${matched}`,
+    `${source}: scanned ${tokens.length}, newly Submitted=${matched}`,
   );
-  return { matched, scanned: tokens.length };
+  return { matched, scanned: tokens.length, usable: true };
 }
 
 /**
- * Submitted matching via Sheets/Forms is deferred. Soft-skip silently so Sync
- * UX stays a short Gmail summary (Open form already uses per-email formUrl).
- */
-const FORMS_MATCHER_DEFERRED = true;
-
-/**
- * Match form/sheet responses to EmailEntry.trackingId → Submitted.
+ * Match real Google Form/Sheet responses → EmailEntry Submitted.
+ * Prefer ticket key (CE-XXXX) from response rows; never runs on Open form.
  */
 export async function matchFormResponsesForUser(
   userId: string,
 ): Promise<MatchResult> {
-  if (FORMS_MATCHER_DEFERRED) {
+  const configs = await prisma.formConfig.findMany({ where: { userId } });
+
+  if (configs.length === 0) {
     return {
       ok: true,
       matched: 0,
@@ -397,9 +417,13 @@ export async function matchFormResponsesForUser(
     };
   }
 
-  const configs = await prisma.formConfig.findMany({ where: { userId } });
+  const hasSheet = configs.some((c) => Boolean(c.responseSheetId));
+  const hasFormsEdit = configs.some(
+    (c) => !c.responseSheetId && Boolean(extractFormsApiFormId(c.formUrl)),
+  );
 
-  if (configs.length === 0) {
+  if (!hasSheet && !hasFormsEdit) {
+    // Soft-skip until Lucas sets Response Sheet id in Settings.
     return {
       ok: true,
       matched: 0,
@@ -414,24 +438,29 @@ export async function matchFormResponsesForUser(
   try {
     const access = await getGoogleAccessToken(userId);
     const needsSheet = configs.some((c) => Boolean(c.responseSheetId));
-    const needsForms = configs.some((c) => !c.responseSheetId);
+    const needsForms = configs.some(
+      (c) => !c.responseSheetId && Boolean(extractFormsApiFormId(c.formUrl)),
+    );
 
     if (needsSheet && !hasScope(access.scope, SHEETS_READONLY)) {
-      throw new GoogleAuthError(
-        `Missing Sheets scope ${SHEETS_READONLY}. Reconnect Google.`,
-        "missing_tokens",
-      );
-    }
-    if (needsForms && !hasScope(access.scope, FORMS_RESPONSES_READONLY)) {
-      // Soft-skip when Forms scope missing and we're not relying on it for Open form.
+      // Soft-skip — don't break Sync UX.
       return {
         ok: true,
         matched: 0,
         scannedTokens: 0,
-        message:
-          "Forms responses scope missing — Submitted matching skipped for now.",
-        stub: false,
-        details,
+        message: "",
+        stub: true,
+        details: ["missing Sheets scope"],
+      };
+    }
+    if (needsForms && !hasScope(access.scope, FORMS_RESPONSES_READONLY)) {
+      return {
+        ok: true,
+        matched: 0,
+        scannedTokens: 0,
+        message: "",
+        stub: true,
+        details: ["missing Forms responses scope"],
       };
     }
 
@@ -448,25 +477,26 @@ export async function matchFormResponsesForUser(
       ok: true,
       matched,
       scannedTokens,
-      message: `Forms/Sheets matcher OK. newly Submitted=${matched}. ${details.join(" · ")}`,
+      message: matched > 0 ? `${matched} submitted` : "",
       stub: false,
       details,
     };
   } catch (e) {
+    // Soft-fail: Submitted matching must not break Gmail sync UX.
     const message =
       e instanceof GoogleAuthError
         ? e.message
         : e instanceof Error
           ? e.message
-          : "Forms/Sheets matcher failed";
+          : "Submitted matcher failed";
 
     return {
-      ok: false,
+      ok: true,
       matched: 0,
       scannedTokens: 0,
-      message,
-      stub: false,
-      details,
+      message: "",
+      stub: true,
+      details: [message],
     };
   }
 }

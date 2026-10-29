@@ -7,14 +7,21 @@ import { assertRequiredEnv, missingEnvKeys } from "@/lib/env";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-function buildSummary(gmail: Awaited<ReturnType<typeof syncGmailForUser>>): string {
+function buildSummary(
+  gmail: Awaited<ReturnType<typeof syncGmailForUser>>,
+  forms: Awaited<ReturnType<typeof matchFormResponsesForUser>>,
+): string {
   if (!gmail.ok) return gmail.message;
-  return `Synced ${gmail.scanned} emails · ${gmail.created} new`;
+  let summary = `Synced ${gmail.scanned} emails · ${gmail.created} new`;
+  if (forms.matched > 0) {
+    summary += ` · ${forms.matched} submitted`;
+  }
+  return summary;
 }
 
 /**
- * POST /api/sync — Gmail upsert for the signed-in user.
- * Forms/Submitted matching is deferred (soft-skipped); Open form uses per-email URLs.
+ * POST /api/sync — Gmail upsert + quiet Submitted matching for the signed-in user.
+ * Submitted comes from Sheet/Forms responses (ticket key), never from Open form.
  * Scheduled multi-user sync lives at GET/POST /api/cron/sync (CRON_SECRET).
  */
 export async function POST() {
@@ -42,9 +49,8 @@ export async function POST() {
 
   const userId = session.user.id;
   const gmail = await syncGmailForUser(userId);
-  // Soft-skip: never surface Forms matcher noise in the Sync UX.
   const forms = await matchFormResponsesForUser(userId);
-  const summary = buildSummary(gmail);
+  const summary = buildSummary(gmail, forms);
 
   return NextResponse.json(
     {
@@ -53,9 +59,9 @@ export async function POST() {
       gmail: { ...gmail, message: summary },
       forms: {
         ok: true,
-        stub: true,
+        stub: forms.stub,
         matched: forms.matched,
-        scannedTokens: 0,
+        scannedTokens: forms.scannedTokens,
         message: "",
       },
     },
