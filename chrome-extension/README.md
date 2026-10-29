@@ -1,6 +1,6 @@
 # ISAT Tracker (Chrome extension)
 
-Simple MV3 popup that lists Jira ISAT survey emails from Gmail and opens:
+Simple MV3 popup that lists Jira ISAT survey emails from Gmail (exact-subject duplicates dropped — first/newest kept) and opens:
 
 - **Open Form** — full prefilled Google Form URL (prefers links ending in `=3`)
 - **Open Ticket** — `https://glia.atlassian.net/browse/{KEY}`

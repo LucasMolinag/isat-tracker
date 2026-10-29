@@ -75,6 +75,7 @@ export async function fetchSurveyEmails(accessToken, opts = {}) {
 
   const messages = list.messages || [];
   const out = [];
+  const seenSubjects = new Set();
 
   // Sequential to stay under Gmail quota for a popup refresh.
   for (const m of messages) {
@@ -84,6 +85,11 @@ export async function fetchSurveyEmails(accessToken, opts = {}) {
     );
     const headers = msg.payload?.headers;
     const subject = headerValue(headers, "Subject") || "(no subject)";
+
+    // Exact subject match → keep first occurrence only (list is newest-first).
+    if (seenSubjects.has(subject)) continue;
+    seenSubjects.add(subject);
+
     const internalMs = msg.internalDate ? Number(msg.internalDate) : NaN;
     const receivedAt = Number.isFinite(internalMs)
       ? new Date(internalMs).toISOString()
