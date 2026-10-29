@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "ISAT Tracker",
+  "version": "0.1.6",
+  "description": "List Jira survey emails and open the prefilled Google Form or Jira ticket.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ISAT Tracker",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "identity",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://gmail.googleapis.com/*",
+    "https://www.googleapis.com/*",
+    "https://oauth2.googleapis.com/*"
+  ],
+  "oauth2": {
+    "client_id": "860318366086-dekb4ibq0sv0lm2bsj2dmv0bj1n23sho.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ]
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo/E32NtgNhSmzX/qxWHEsTqPC5ZvpmsZ/bVZDo/AM+Zc++BdInlz4XqyWjLKIzBnrGZvtPt4aT8q78YaazkQeIk9f8yKVY2PH4j44q3eP8GrGiZGNVtR473O9sSGiWoBYWEpsF/GjjdIhiP7rtVrZdcPllVuLyOjSHhfGQ6R7ecikgC6L5aDYjS8i4hD/bfJyhxhWhxJA7QHH3cAiYc4XrWPGakjoCyn2E4lY4HRJqQZaT6sxuJBuKoggIap8GiltXt4pK0jJTddMLo+LtA2l9jDOtJzjJvNPO1EjOOhG070h5Tr7Wpv/OxMdgSrOUi51hdMu2paDZAQmQi3HzLwvQIDAQAB"
+}

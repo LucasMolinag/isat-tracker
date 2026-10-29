@@ -2,6 +2,8 @@
 
 Multi-user web app: connect Google, pull inbox mail matching configurable subject rules, show a dashboard, and track **Unread → Read → Submitted** against a Google Form via per-email tracking tokens.
 
+Looking for a lighter local option? See the **[Chrome extension](./chrome-extension/)** (`chrome-extension/`) — Gmail readonly popup with Open Form / Open Ticket, no Neon or Submitted tracking.
+
 ## Stack
 
 - Next.js (App Router) + TypeScript + Tailwind

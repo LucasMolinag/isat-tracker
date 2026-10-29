@@ -1,0 +1,7 @@
+{
+  "name": "isat-tracker-chrome-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Chrome MV3 popup for Jira ISAT survey emails",
+  "type": "module"
+}
