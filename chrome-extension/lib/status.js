@@ -12,6 +12,19 @@ export const STATUS = {
 
 const STATUS_KEY = "messageStatus";
 const OPENED_KEY = "messageOpened";
+const SHOW_DONE_KEY = "showDone";
+
+/** Persist “Show done” filter (default false = hide Submitted). */
+export async function getShowDone() {
+  const data = await chrome.storage.local.get(SHOW_DONE_KEY);
+  return Boolean(data[SHOW_DONE_KEY]);
+}
+
+/** @param {boolean} show */
+export async function setShowDone(show) {
+  await chrome.storage.local.set({ [SHOW_DONE_KEY]: Boolean(show) });
+  return Boolean(show);
+}
 
 function normalizeStatus(value) {
   if (value === STATUS.Read || value === STATUS.Submitted) return value;

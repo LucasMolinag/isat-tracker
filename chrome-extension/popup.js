@@ -1,7 +1,9 @@
 import {
+  getShowDone,
   getStatuses,
   markFormOpened,
   setDone,
+  setShowDone,
   STATUS,
 } from "./lib/status.js";
 
@@ -13,9 +15,13 @@ const btnDisconnect = $("btn-disconnect");
 const statusEl = $("status");
 const listEl = $("list");
 const metaEl = $("meta");
+const filterBar = $("filter-bar");
+const chkShowDone = $("chk-show-done");
 
 /** @type {Array<object>} */
 let currentEmails = [];
+/** @type {boolean} */
+let showDone = false;
 
 function setStatusMsg(text, isError = false) {
   statusEl.textContent = text || "";

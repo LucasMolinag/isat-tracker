@@ -118,8 +118,9 @@ Scope: `gmail.readonly` only (no Drive).
 2. **Refresh**  
 3. Status starts **Unread**; **Open Form** awaits local **Read** (and “opened”), then opens a tab  
 4. **Done** checkbox → **Submitted**; uncheck → **Read** if Open Form was used, else **Unread**  
-5. **Open Ticket** does not change status  
-6. Keys: Gmail `messages.id` in `chrome.storage.local.messageStatus` (+ `messageOpened`)  
+5. Done/Submitted rows are **hidden by default**; enable **Show done** to reveal them (preference in `chrome.storage.local.showDone`)  
+6. **Open Ticket** does not change status  
+7. Keys: Gmail `messages.id` in `chrome.storage.local.messageStatus` (+ `messageOpened`)  
 
 ## Layout
 
