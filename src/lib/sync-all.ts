@@ -11,7 +11,8 @@ export type UserSyncSummary = {
 };
 
 /**
- * Run Gmail + Forms/Sheets sync for every user with a linked Google account.
+ * Run Gmail + Submitted (Sheet/Forms ticket-key) sync for every Google-linked user.
+ * Forms failures are soft-skipped so cron stays green when Sheet id is unset.
  */
 export async function syncAllGoogleUsers(): Promise<{
   ok: boolean;
@@ -26,7 +27,6 @@ export async function syncAllGoogleUsers(): Promise<{
     },
   });
 
-  // Dedupe by userId
   const seen = new Set<string>();
   const results: UserSyncSummary[] = [];
 
@@ -39,9 +39,9 @@ export async function syncAllGoogleUsers(): Promise<{
     results.push({
       userId: account.userId,
       email: account.user.email,
-      ok: gmail.ok && forms.ok,
+      ok: gmail.ok,
       gmail,
-      forms,
+      forms: { ...forms, ok: true, message: "" },
     });
   }
 

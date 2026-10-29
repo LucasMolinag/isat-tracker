@@ -11,6 +11,7 @@ import type { EntryStatus, SubjectRule } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { GoogleAuthError, googleJson, hasScope } from "@/lib/google-auth";
 import { extractGoogleFormUrl } from "@/lib/forms";
+import { sanitizePublicError } from "@/lib/security";
 
 const GMAIL_READONLY =
   "https://www.googleapis.com/auth/gmail.readonly";
@@ -247,21 +248,17 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
       });
 
       if (existing) {
-        // Backfill formUrl / formConfigId when missing.
-        if (!existing.formUrl || (formConfig && !existing.formConfigId)) {
-          const details = !existing.formUrl
-            ? await getMessageDetails(userId, gmailMessageId)
-            : null;
-          await prisma.emailEntry.update({
-            where: { id: existing.id },
-            data: {
-              ...(details?.formUrl ? { formUrl: details.formUrl } : {}),
-              ...(formConfig && !existing.formConfigId
-                ? { formConfigId: formConfig.id }
-                : {}),
-            },
-          });
-        }
+        // Always refresh formUrl so extract fixes (full prefill, prefer =3) apply.
+        const details = await getMessageDetails(userId, gmailMessageId);
+        await prisma.emailEntry.update({
+          where: { id: existing.id },
+          data: {
+            ...(details.formUrl ? { formUrl: details.formUrl } : {}),
+            ...(formConfig && !existing.formConfigId
+              ? { formConfigId: formConfig.id }
+              : {}),
+          },
+        });
         upserted += 1;
         continue;
       }
@@ -296,17 +293,18 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
       upserted,
       created,
       scanned: messageIds.length,
-      message: `Gmail sync OK. query=${query}; scanned=${messageIds.length}; created=${created}; updated=${upserted - created}`,
+      message: `Synced ${messageIds.length} emails · ${created} new`,
       stub: false,
       query,
     };
   } catch (e) {
-    const message =
+    const raw =
       e instanceof GoogleAuthError
         ? e.message
         : e instanceof Error
           ? e.message
           : "Gmail sync failed";
+    const message = sanitizePublicError(raw);
 
     await prisma.user.update({
       where: { id: userId },
@@ -323,7 +321,7 @@ export async function syncGmailForUser(userId: string): Promise<SyncResult> {
       scanned: 0,
       message,
       stub: false,
-      query,
+      // Omit query from error payloads (addresses/subjects).
     };
   }
 }

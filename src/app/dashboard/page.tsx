@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { StatusChip } from "@/components/status-chip";
 import { SyncButton } from "@/components/sync-button";
 import { LocalDateTime } from "@/components/local-datetime";
+import {
+  jiraBrowseUrlFromSubject,
+  parseJiraTicketKey,
+} from "@/lib/jira";
 
 export const dynamic = "force-dynamic";
 
@@ -99,32 +103,51 @@ export default async function DashboardPage() {
         </div>
       ) : (
         <ul className="divide-y divide-stone-200 overflow-hidden rounded-md border border-stone-200 bg-white">
-          {entries.map((entry) => (
-            <li
-              key={entry.id}
-              className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="min-w-0 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusChip status={entry.status} />
-                  <span className="truncate font-medium text-stone-900">
-                    {entry.subject}
-                  </span>
-                </div>
-                <p className="truncate text-xs text-stone-500">
-                  {entry.fromAddress} ·{" "}
-                  <LocalDateTime value={entry.receivedAt} />
-                  {entry.formUrl ? " · form linked" : " · no form URL in body"}
-                </p>
-              </div>
-              <a
-                href={`/r/${entry.trackingId}`}
-                className="shrink-0 rounded-md border border-stone-300 px-3 py-1.5 text-center text-sm text-stone-800 hover:bg-stone-50"
+          {entries.map((entry) => {
+            const ticketKey = parseJiraTicketKey(entry.subject);
+            const jiraUrl = jiraBrowseUrlFromSubject(entry.subject);
+            return (
+              <li
+                key={entry.id}
+                className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
               >
-                Open form
-              </a>
-            </li>
-          ))}
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusChip status={entry.status} />
+                    <span className="truncate font-medium text-stone-900">
+                      {entry.subject}
+                    </span>
+                  </div>
+                  <p className="truncate text-xs text-stone-500">
+                    {entry.fromAddress} ·{" "}
+                    <LocalDateTime value={entry.receivedAt} />
+                    {entry.formUrl ? " · form linked" : " · no form URL in body"}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {jiraUrl ? (
+                    <a
+                      href={jiraUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-md border border-stone-300 px-3 py-1.5 text-center text-sm text-stone-800 hover:bg-stone-50"
+                      title={ticketKey ? `Open ${ticketKey} in Jira` : "Open ticket"}
+                    >
+                      Open Ticket
+                    </a>
+                  ) : null}
+                  <a
+                    href={`/r/${entry.trackingId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-md border border-stone-300 px-3 py-1.5 text-center text-sm text-stone-800 hover:bg-stone-50"
+                  >
+                    Open Form
+                  </a>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </main>

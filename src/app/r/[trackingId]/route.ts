@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { transitionEntryStatus } from "@/lib/status";
 import { buildTrackedFormUrl } from "@/lib/forms";
@@ -7,40 +8,41 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /r/{trackingId}
- * Marks the entry Read (never downgrades Submitted), then redirects to the
- * Google Form URL extracted from that email (preferred). Prefills trackingId
- * into FormConfig.entryFieldId when configured.
+ * Session required (same-site cookie still sent for target=_blank).
+ * Scoped to the signed-in owner — no cross-user IDOR.
+ * Marks Read only (never Submitted). Generic errors; no PII.
  */
 export async function GET(
   _request: Request,
   context: { params: Promise<{ trackingId: string }> },
 ) {
-  const { trackingId } = await context.params;
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+  }
 
-  const entry = await prisma.emailEntry.findUnique({
-    where: { trackingId },
+  const { trackingId } = await context.params;
+  if (!trackingId || trackingId.length > 80) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const entry = await prisma.emailEntry.findFirst({
+    where: { trackingId, userId: session.user.id },
     include: { formConfig: true },
   });
 
+  // Same 404 for missing vs other user's entry (no existence leak).
   if (!entry) {
-    return NextResponse.json(
-      { error: "Unknown tracking link" },
-      { status: 404 },
-    );
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Idempotent: Submitted wins if already submitted.
+  // Open → Read only. Never Submitted on click/open.
   await transitionEntryStatus(entry.id, "Read", "open tracked form link");
 
-  const formUrl = entry.formUrl ?? entry.formConfig?.formUrl ?? null;
+  const formUrl = entry.formUrl;
   if (!formUrl) {
     return NextResponse.json(
-      {
-        error:
-          "No Google Form URL on this email (and no FormConfig fallback). Re-sync after the message includes a forms link.",
-        trackingId,
-        status: entry.status,
-      },
+      { error: "Form link unavailable. Sync again from the dashboard." },
       { status: 422 },
     );
   }

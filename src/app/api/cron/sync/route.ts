@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertCronAuthorized } from "@/lib/cron-auth";
-import { assertRequiredEnv, envChecklist, missingEnvKeys } from "@/lib/env";
+import { assertRequiredEnv, missingEnvKeys } from "@/lib/env";
+import { sanitizePublicError } from "@/lib/security";
 import { syncAllGoogleUsers } from "@/lib/sync-all";
 
 export const dynamic = "force-dynamic";
@@ -9,16 +10,13 @@ export const maxDuration = 60;
 
 /**
  * GET/POST /api/cron/sync
- * Vercel Cron (and manual) entrypoint. Requires CRON_SECRET.
+ * Vercel Cron entrypoint. Requires CRON_SECRET (Bearer / x-cron-secret).
  * Syncs every user with a linked Google account.
  */
 async function handle(request: Request) {
   const authz = assertCronAuthorized(request);
   if (!authz.ok) {
-    return NextResponse.json(
-      { error: "Unauthorized", detail: authz.reason },
-      { status: 401 },
-    );
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
@@ -33,11 +31,6 @@ async function handle(request: Request) {
       {
         error: e instanceof Error ? e.message : "Env validation failed",
         missing: missingEnvKeys(),
-        checklist: envChecklist().map(({ key, present, hint }) => ({
-          key,
-          present,
-          hint,
-        })),
       },
       { status: 503 },
     );
@@ -49,21 +42,20 @@ async function handle(request: Request) {
       ok: summary.ok,
       users: summary.users,
       results: summary.results.map((r) => ({
+        // Opaque id only — no email in cron JSON.
         userId: r.userId,
-        email: r.email,
         ok: r.ok,
         gmail: {
           ok: r.gmail.ok,
           created: r.gmail.created,
           upserted: r.gmail.upserted,
           scanned: r.gmail.scanned,
-          message: r.gmail.message,
+          message: sanitizePublicError(r.gmail.message),
         },
         forms: {
           ok: r.forms.ok,
           matched: r.forms.matched,
           scannedTokens: r.forms.scannedTokens,
-          message: r.forms.message,
         },
       })),
     },
