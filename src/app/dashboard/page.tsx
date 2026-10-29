@@ -138,6 +138,8 @@ export default async function DashboardPage() {
                   ) : null}
                   <a
                     href={`/r/${entry.trackingId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="rounded-md border border-stone-300 px-3 py-1.5 text-center text-sm text-stone-800 hover:bg-stone-50"
                   >
                     Open Form
