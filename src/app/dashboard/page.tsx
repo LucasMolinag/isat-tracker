@@ -114,17 +114,6 @@ export default async function DashboardPage() {
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusChip status={entry.status} />
-                    {ticketKey && jiraUrl ? (
-                      <a
-                        href={jiraUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="shrink-0 font-mono text-sm font-medium text-sky-800 underline-offset-2 hover:underline"
-                        title={`Open ${ticketKey} in Jira`}
-                      >
-                        {ticketKey}
-                      </a>
-                    ) : null}
                     <span className="truncate font-medium text-stone-900">
                       {entry.subject}
                     </span>
@@ -135,12 +124,25 @@ export default async function DashboardPage() {
                     {entry.formUrl ? " · form linked" : " · no form URL in body"}
                   </p>
                 </div>
-                <a
-                  href={`/r/${entry.trackingId}`}
-                  className="shrink-0 rounded-md border border-stone-300 px-3 py-1.5 text-center text-sm text-stone-800 hover:bg-stone-50"
-                >
-                  Open form
-                </a>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {jiraUrl ? (
+                    <a
+                      href={jiraUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-md border border-stone-300 px-3 py-1.5 text-center text-sm text-stone-800 hover:bg-stone-50"
+                      title={ticketKey ? `Open ${ticketKey} in Jira` : "Open ticket"}
+                    >
+                      Open Ticket
+                    </a>
+                  ) : null}
+                  <a
+                    href={`/r/${entry.trackingId}`}
+                    className="rounded-md border border-stone-300 px-3 py-1.5 text-center text-sm text-stone-800 hover:bg-stone-50"
+                  >
+                    Open Form
+                  </a>
+                </div>
               </li>
             );
           })}
