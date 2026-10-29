@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { StatusChip } from "@/components/status-chip";
 import { SyncButton } from "@/components/sync-button";
+import { LocalDateTime } from "@/components/local-datetime";
 
 export const dynamic = "force-dynamic";
 
@@ -72,9 +73,11 @@ export default async function DashboardPage() {
       <section className="mb-6 rounded-md border border-stone-200 bg-white p-4 text-sm">
         <h2 className="font-medium text-stone-900">Last sync</h2>
         <p className="mt-1 text-stone-600">
-          {user?.lastSyncAt
-            ? user.lastSyncAt.toISOString()
-            : "Never synced"}
+          {user?.lastSyncAt ? (
+            <LocalDateTime value={user.lastSyncAt} />
+          ) : (
+            "Never synced"
+          )}
         </p>
         {user?.lastSyncError && (
           <p className="mt-1 text-amber-800">{user.lastSyncError}</p>
@@ -110,7 +113,7 @@ export default async function DashboardPage() {
                 </div>
                 <p className="truncate text-xs text-stone-500">
                   {entry.fromAddress} ·{" "}
-                  {entry.receivedAt.toISOString().slice(0, 19)}Z
+                  <LocalDateTime value={entry.receivedAt} />
                   {entry.formUrl ? " · form linked" : " · no form URL in body"}
                 </p>
               </div>
