@@ -143,7 +143,9 @@ btnAuth.addEventListener("click", async () => {
   try {
     const res = await send("CONNECT");
     if (!res.ok) {
-      setStatus(res.error || "Connect failed", true);
+      const err = res.error || "Connect failed";
+      // Surface bad-client guidance without burying it.
+      setStatus(err, true);
       return;
     }
     setConnectedUi(true);

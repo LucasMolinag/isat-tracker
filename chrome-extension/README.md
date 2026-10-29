@@ -2,65 +2,85 @@
 
 Simple MV3 popup that lists Jira ISAT survey emails from Gmail and opens:
 
-- **Open Form** — full prefilled Google Form URL from the message body (prefers links ending in `=3`)
-- **Open Ticket** — `https://glia.atlassian.net/browse/{KEY}` parsed from the subject
+- **Open Form** — full prefilled Google Form URL (prefers links ending in `=3`)
+- **Open Ticket** — `https://glia.atlassian.net/browse/{KEY}`
 
-No Neon/Vercel/Submitted tracking — local Chrome + Gmail only.
+No Neon/Vercel/Submitted tracking.
 
-## Fix “OAuth2 request failed: bad client id”
+Stable unpacked extension ID (public `key` in `manifest.json`):
 
-That error almost always means the **GCP OAuth client type / Item ID does not match this unpacked extension**. Use this checklist:
+```
+fldldeffedenajeiaeodlhajihlligda
+```
 
-### Exact checklist (Lucas)
+Current `oauth2.client_id`:
 
-1. **OAuth client type must be “Chrome Extension”**  
-   GCP → APIs & Services → Credentials → the client  
-   `860318366086-o9dfo14prko87bgetr3t5r210f0djpjv.apps.googleusercontent.com`  
-   - Application type: **Chrome Extension** (not Web application, not Desktop).  
-   - A **Web** client ID causes `bad client id` with `chrome.identity.getAuthToken`.
+```
+860318366086-o9dfo14prko87bgetr3t5r210f0djpjv.apps.googleusercontent.com
+```
 
-2. **Item ID must equal the Chrome extension ID**  
-   Fixed ID for this repo (from the public `key` in `manifest.json`):
+---
+
+## “OAuth2 request failed: bad client id” — diagnosis
+
+If you **downloaded `client_secret_….json`**, that OAuth client is almost certainly a **Web application** (or Desktop) client — **not** type **Chrome Extension**.
+
+| Signal | Meaning |
+| --- | --- |
+| You have `client_secret_*.json` | **Web** client → `getAuthToken` → **bad client id** |
+| Chrome Extension client | No secret JSON; only Client ID + Item ID field |
+| Fixed extension ID | `fldldeffedenajeiaeodlhajihlligda` |
+
+`chrome.identity.getAuthToken` **only** works with OAuth clients of type **Chrome Extension** whose **Item ID** equals the extension ID.
+
+This extension will **fall back** to `launchWebAuthFlow` when `getAuthToken` returns bad client id (Web client path). For that fallback you must add a redirect URI (Fix B below). **Do not** put `client_secret` in the extension.
+
+---
+
+## Fix A (recommended): Recreate as Chrome Extension client
+
+1. GCP → **APIs & Services → Credentials → + Create credentials → OAuth client ID**
+2. Application type: **Chrome Extension** (not Web application)
+3. **Item ID:** `fldldeffedenajeiaeodlhajihlligda`
+4. Create → copy the **Client ID** only (there is **no** client secret to download)
+5. Paste into `manifest.json` → `oauth2.client_id`
+6. Enable **Gmail API** on the same project
+7. Consent screen: add scope `https://www.googleapis.com/auth/gmail.readonly`
+8. `chrome://extensions` → **Reload** ISAT Tracker (or Remove → Load unpacked `chrome-extension/`)
+9. Confirm card **ID** = `fldldeffedenajeiaeodlhajihlligda`
+10. Popup → **Connect Google**
+
+You can delete or ignore the old Web client that produced `client_secret_*.json`.
+
+---
+
+## Fix B: Keep the Web client (your current ID)
+
+Use this if you keep  
+`860318366086-o9dfo14prko87bgetr3t5r210f0djpjv.apps.googleusercontent.com`.
+
+1. Open that OAuth client in GCP (type should show **Web application**)
+2. **Authorized redirect URIs** → add **exactly**:
 
    ```
-   fldldeffedenajeiaeodlhajihlligda
+   https://fldldeffedenajeiaeodlhajihlligda.chromiumapp.org/
    ```
 
-   In the Chrome Extension OAuth client, set **Item ID** to exactly that string → Save.
+3. Save
+4. Enable **Gmail API**
+5. Reload the extension → **Connect Google**  
+   (extension tries `getAuthToken`, then opens Google sign-in via `launchWebAuthFlow`)
 
-3. **Confirm Chrome shows the same ID**  
-   - `chrome://extensions` → Developer mode → **Load unpacked** → select `chrome-extension/`  
-   - On the card, **ID** must be `fldldeffedenajeiaeodlhajihlligda`  
-   - If it differs, you loaded the wrong folder or an old copy without `key` — remove the extension and load this folder again.
+Still **never** commit or paste `client_secret` into the extension.
 
-4. **`manifest.json` `oauth2.client_id` must be exact**
+---
 
-   ```json
-   "oauth2": {
-     "client_id": "860318366086-o9dfo14prko87bgetr3t5r210f0djpjv.apps.googleusercontent.com",
-     "scopes": ["https://www.googleapis.com/auth/gmail.readonly"]
-   }
-   ```
+## Load unpacked
 
-   No spaces, full `.apps.googleusercontent.com` suffix.
-
-5. **Reload after any manifest / GCP change**  
-   On `chrome://extensions`, click **Reload** on ISAT Tracker (or Remove → Load unpacked again). Then open the popup → **Connect Google**.
-
-6. **Gmail API enabled** on the same GCP project as that OAuth client  
-   APIs & Services → Library → **Gmail API** → Enable.
-
-7. **Consent screen includes the scope**  
-   `https://www.googleapis.com/auth/gmail.readonly`  
-   After scope changes, revoke the app under Google Account → Security → Third-party access and connect again.
-
-### Why a fixed `key`?
-
-Unpacked extensions normally get an ID derived from the folder path (unstable across machines). This repo commits a public `"key"` in `manifest.json` so the ID is always:
-
-`fldldeffedenajeiaeodlhajihlligda`
-
-Only the **public** key is in git (safe). The private PEM is not committed.
+1. `chrome://extensions` → Developer mode  
+2. **Load unpacked** → this `chrome-extension/` folder  
+3. ID must be `fldldeffedenajeiaeodlhajihlligda`  
+4. Apply Fix A or Fix B → Reload → Connect  
 
 ## What it queries
 
@@ -68,31 +88,23 @@ Only the **public** key is in git (safe). The private PEM is not committed.
 from:jira@glia.atlassian.net (subject:"How was the collab on" OR subject:"How is the information provided on")
 ```
 
-Scope: `https://www.googleapis.com/auth/gmail.readonly` only (no Drive).
-
-## Load unpacked
-
-1. Open `chrome://extensions` → Developer mode  
-2. **Load unpacked** → this `chrome-extension/` folder  
-3. Confirm ID = `fldldeffedenajeiaeodlhajihlligda`  
-4. Ensure GCP Chrome Extension client Item ID matches → Reload extension  
-5. Popup → **Connect Google** → **Refresh**
+Scope: `gmail.readonly` only (no Drive).
 
 ## Use
 
-1. **Connect Google** — Gmail readonly  
-2. **Refresh** — matching survey messages  
+1. **Connect Google**  
+2. **Refresh**  
 3. **Open Ticket** / **Open Form** (new tabs)
 
 ## Layout
 
 ```
 chrome-extension/
-  manifest.json      # MV3, oauth2.client_id, public key (stable ID)
+  manifest.json       # client_id + public key (stable ID)
   background.js
-  popup.html|css|js
-  lib/forms.js | gmail.js | jira.js
-  icons/
+  lib/auth.js         # getAuthToken + launchWebAuthFlow fallback
+  lib/gmail.js | forms.js | jira.js
+  popup.*
   README.md
 ```
 
@@ -100,13 +112,13 @@ chrome-extension/
 
 | Symptom | Fix |
 | --- | --- |
-| `bad client id` | Client must be **Chrome Extension** type; Item ID = `fldldeffedenajeiaeodlhajihlligda`; client_id exact; reload extension |
-| Extension ID ≠ fixed ID | Load this folder (with `key`); remove old unpacked copy |
-| Gmail API not used / 403 | Enable Gmail API on the same GCP project |
-| Wrong Google account | Disconnect in popup, reconnect |
+| `bad client id` | Web client used with getAuthToken → Fix A or add redirect URI (Fix B) |
+| Auth window closes / no token | Redirect URI must be exactly `https://fldldeffedenajeiaeodlhajihlligda.chromiumapp.org/` |
+| Extension ID ≠ fixed ID | Load this folder (with `key`); remove other copies |
+| Gmail 403 | Enable Gmail API; reconnect |
 
 ## Privacy
 
-- Tokens via `chrome.identity` (Chrome-managed)  
-- List cache in `chrome.storage.session` only  
+- Tokens via `chrome.identity` / session storage only  
+- No `client_secret` in the package  
 - No analytics
